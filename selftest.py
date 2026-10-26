@@ -20,7 +20,8 @@ try:
 except Exception:
     pass
 
-from checkers import BestBuyChecker, NewsChecker, PageWatchChecker, ShopifyChecker, TargetChecker
+from checkers import (BestBuyChecker, NewsChecker, PageWatchChecker, SearchPageChecker, ShopifyChecker,
+                      TargetChecker)
 from engine import Engine
 from geo import lookup_zip
 from http_client import AiohttpFetcher
@@ -47,6 +48,7 @@ async def main(zip_code: str, radius: int, extra_urls: list[str]) -> None:
             BestBuyChecker(fetcher, os.getenv("BESTBUY_API_KEY", "")),
             ShopifyChecker(fetcher),
             PageWatchChecker(fetcher),
+            SearchPageChecker(fetcher),
         ]
         engine = Engine(state, checkers, os.path.join(tmp, "seen.json"), news=NewsChecker(fetcher))
         print("Scanning… (Target can take a minute: one call per store per 20 products)\n")

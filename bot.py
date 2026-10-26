@@ -18,7 +18,8 @@ from discord import app_commands
 import filters
 from zoneinfo import ZoneInfo
 
-from checkers import BestBuyChecker, NewsChecker, PageWatchChecker, ShopifyChecker, TargetChecker
+from checkers import (BestBuyChecker, NewsChecker, PageWatchChecker, SearchPageChecker, ShopifyChecker,
+                      TargetChecker)
 from checkers.news import NewsItem
 from engine import Engine
 from geo import lookup_zip, valid_zip
@@ -83,6 +84,8 @@ class RestockBot(discord.Client):
             BestBuyChecker(self.fetcher, BESTBUY_API_KEY),
             ShopifyChecker(self.fetcher),
             PageWatchChecker(self.fetcher),
+            SearchPageChecker(self.fetcher, walmart=os.getenv("WALMART", "1") != "0",
+                              gamestop=os.getenv("GAMESTOP", "1") != "0"),
         ]
         self.engine = Engine(self.state, checkers, os.path.join(DATA_DIR, "seen.json"),
                              realert_hours=REALERT_HOURS, news=NewsChecker(self.fetcher))

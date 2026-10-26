@@ -27,7 +27,8 @@ try:
 except Exception:
     pass
 
-from checkers import BestBuyChecker, NewsChecker, PageWatchChecker, ShopifyChecker, TargetChecker
+from checkers import (BestBuyChecker, NewsChecker, PageWatchChecker, SearchPageChecker, ShopifyChecker,
+                      TargetChecker)
 from engine import Engine
 from geo import lookup_zip, valid_zip
 from http_client import AiohttpFetcher
@@ -162,6 +163,8 @@ async def main() -> int:
             BestBuyChecker(fetcher, os.getenv("BESTBUY_API_KEY", "")),
             ShopifyChecker(fetcher),
             PageWatchChecker(fetcher),
+            SearchPageChecker(fetcher, walmart=bool(settings.get("walmart", True)),
+                              gamestop=bool(settings.get("gamestop", True))),
         ]
         engine = Engine(state, checkers, os.path.join(STATE_DIR, "seen.json"),
                         realert_hours=float(settings.get("realert_hours") or 6), news=NewsChecker(fetcher))

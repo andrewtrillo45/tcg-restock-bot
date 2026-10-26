@@ -13,7 +13,8 @@ Everyone in your server sets their own circle: `/track zip:80202 radius:50`.
 | **Target** — in-store + order-pickup stock at every Target in your circle | Target's own public store/stock API | 🟢 works (unofficial, could break if Target changes it) |
 | **Best Buy** — store pickup stock in your circle + online restocks + street dates | Official Best Buy developer API (free key) | 🟢 works |
 | **Local card shops** — new sealed product / back in stock | Shopify's public product feed (most shops use Shopify) | 🟢 works for Shopify shops |
-| **Walmart, GameStop, Costco, Pokémon Center, anything else** | Watches product pages you give it (`/watchurl`) | 🔴 online stock only, best-effort — these sites don't share store-level stock and often block bots |
+| **Walmart + GameStop** — online stock, found automatically from their search pages | Reads their search results for Pokémon / Yu-Gi-Oh! (marketplace scalpers filtered out) | 🟡 online only, best-effort — both block bots on some runs; shows 🔴 when that happens, resumes by itself |
+| **Costco, Pokémon Center, anything else** | Watches product pages you give it (`/watchurl`) | 🔴 online stock only, best-effort |
 | **Drop news** — set reveals, release dates, pre-orders | RSS from PokéBeach + YGOrganization (add more with `/addfeed`) | 🟢 works |
 | **New listings** — "Target just created a page for X, TCIN 9xxxxxxx" | Compares each scan's product list with the last one | 🟢 works |
 | **Drop calendar** — `/drops`, morning digest, "DROPS TODAY" ping | Street dates pulled from Best Buy/Target product data, or added by hand | 🟢 works |

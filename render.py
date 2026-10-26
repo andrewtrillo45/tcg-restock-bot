@@ -11,8 +11,8 @@ from checkers.news import NewsItem
 from models import Alert, Product
 
 TZ = os.getenv("TZ_NAME", "America/Denver")
-COLORS = {"target": 0xCC0000, "bestbuy": 0x0046BE, "shop": 0x2E8B57, "url": 0x7289DA, "news": 0xF1C40F}
-RETAILER_LABEL = {"target": "Target", "bestbuy": "Best Buy", "shop": "Local shop", "url": "Online",
+COLORS = {"target": 0xCC0000, "bestbuy": 0x0046BE, "walmart": 0x0071CE, "gamestop": 0xE4002B, "shop": 0x2E8B57, "url": 0x7289DA, "news": 0xF1C40F}
+RETAILER_LABEL = {"target": "Target", "bestbuy": "Best Buy", "walmart": "Walmart", "gamestop": "GameStop", "shop": "Local shop", "url": "Online",
                   "manual": "added by hand", "news": "news"}
 SKU_WORD = {"target": "TCIN", "bestbuy": "SKU"}
 
