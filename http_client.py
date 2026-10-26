@@ -55,6 +55,23 @@ class AiohttpFetcher:
             log.debug("GET %s failed: %s", url, e)
             return 0, None
 
+    async def post_json(self, url: str, body: dict, headers: dict | None = None):
+        """POST JSON. Return (status, json_or_None)."""
+        await self.start()
+        hdrs = {"User-Agent": "tcg-restock-bot/1.0", **(headers or {})}
+        try:
+            async with self._session.post(url, json=body, headers=hdrs) as r:
+                try:
+                    data = await r.json(content_type=None)
+                except Exception:
+                    data = None
+                return r.status, data
+        except asyncio.TimeoutError:
+            return 0, None
+        except Exception as e:
+            log.debug("POST %s failed: %s", url, e)
+            return 0, None
+
     async def get_text(self, url: str, params: dict | None = None, headers: dict | None = None):
         """Return (status, text_or_empty, final_url)."""
         await self.start()

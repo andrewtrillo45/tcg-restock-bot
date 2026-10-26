@@ -22,7 +22,7 @@ No bot anywhere can see Walmart's or GameStop's shelf counts — if someone says
 
 ---
 
-## Commands
+## Commands (live-bot mode; in GitHub mode the same things are set in config.json)
 
 **Everyone**
 - `/track zip:80202 radius:50` — start alerts for a 50-mile circle (max 100). Options: `games`, `dm:true`, `online:false`
@@ -44,7 +44,40 @@ No bot anywhere can see Walmart's or GameStop's shelf counts — if someone says
 
 ---
 
-## Setup (about 20 minutes)
+## Two ways to run it
+
+| | **GitHub mode** (recommended) | **Live bot** (Render / Oracle / your PC) |
+|---|---|---|
+| Where it runs | GitHub Actions — free, nothing to keep awake, nothing to babysit | A server that stays on 24/7 |
+| How people join | You edit `config.json` on GitHub (name, zip, radius) | Everyone types `/track zip radius` themselves |
+| Alerts | Posted through a Discord webhook, @-mentions still work | Posted by the bot, plus optional DMs |
+| Timing | Every 10 minutes (GitHub sometimes runs a few minutes late when it's busy) | Every 10 minutes, on the dot |
+| Commands | None — `/stock`, `/drops`, `/skus` aren't available; the digest covers drops | All slash commands |
+| Cost | $0 on a **public** repo (unlimited). A private repo gets 2,000 free minutes/month ≈ one scan every 30 min | $0 on Render free (sleeps unless pinged) / Oracle Always Free |
+
+Nothing in the code is secret — tokens and keys live in GitHub's encrypted Secrets, never in the files — so a public repo is fine. If you'd rather keep it private, set the cron in `.github/workflows/scan.yml` to `3-59/30 * * * *`.
+
+---
+
+## GitHub mode setup (15 minutes)
+
+1. **Discord webhook.** In Discord, open the channel's settings → **Integrations → Webhooks → New Webhook** → name it → **Copy Webhook URL**. (Make a second one in a news channel if you want drop news separate.)
+2. **Best Buy key.** <https://developer.bestbuy.com> → sign up → the key is emailed to you. Without it, Best Buy is skipped.
+3. **Put the code on GitHub.** Create a new repository (public), then **Add file → Upload files** → drag everything from this folder in (including the `.github` folder — on Windows, show hidden files) → **Commit**.
+4. **Add the secrets.** Repo → **Settings → Secrets and variables → Actions → New repository secret**:
+   - `DISCORD_WEBHOOK` = the webhook URL (required)
+   - `BESTBUY_API_KEY` = your key (recommended)
+   - `NEWS_WEBHOOK` = second webhook (optional)
+5. **Say where you are.** Open `config.json` on GitHub → pencil icon → replace `CHANGE-ME` with your zip, set `discord_user_id` if you want @-mentions (Discord → Settings → Advanced → Developer Mode, then right-click yourself → Copy User ID) → Commit. Add friends as extra entries in `trackers`, local shops under `shops`, Walmart/GameStop pages under `pages`, known TCINs/SKUs under `pinned_skus`, and release dates under `drops`. `config.example.json` shows every field.
+6. **Turn it on.** Repo → **Actions** tab → enable workflows if asked → **TCG stock scan → Run workflow**. The first run only takes a snapshot (no spam). From then on it runs every 10 minutes by itself and posts only what newly came in stock. The green ✓ / red ✗ on each run tells you it's healthy; open a run → "Scan stores" to see each retailer's OK/FAIL line.
+
+That's it. The bot remembers what it already alerted by committing a tiny `state/` folder back to the repo after each run (that also keeps GitHub's scheduler from going idle).
+
+**Tip:** if Target shows `FAIL` with "HTTP 403/blocked" in the Actions log, GitHub's runner IPs are being refused by Target that day — Best Buy and shops still work, and the live-bot mode on Oracle avoids it.
+
+---
+
+## Live-bot setup (the full slash-command version)
 
 ### 1. Make the Discord bot
 1. Go to <https://discord.com/developers/applications> → **New Application** → name it.
@@ -52,38 +85,31 @@ No bot anywhere can see Walmart's or GameStop's shelf counts — if someone says
 3. Left menu **OAuth2** → **URL Generator**: tick scopes `bot` and `applications.commands`; bot permissions: **Send Messages, Embed Links, Attach Files, Read Message History**. Open the generated URL and invite the bot to your server.
 4. In Discord: **Settings → Advanced → Developer Mode on**. Right-click your alerts channel → **Copy Channel ID**. Do the same for a private channel the bot can use for backups (e.g. `#bot-config`), and right-click the server icon → **Copy Server ID**.
 
-### 2. Get a free Best Buy API key
-<https://developer.bestbuy.com> → sign up → the key is emailed to you (usually within minutes). Without it, Best Buy is skipped.
+### 2. Run it somewhere
 
-### 3. Run it somewhere
+**Render (free, deploys straight from your GitHub repo)**
+1. <https://render.com> → **New → Blueprint** → connect the repo (it reads `render.yaml`).
+2. Fill in: `DISCORD_TOKEN`, `ALERT_CHANNEL_ID`, `CONFIG_CHANNEL_ID`, `GUILD_ID`, `BESTBUY_API_KEY`. Deploy.
+3. Render's free tier sleeps after 15 idle minutes, so keep it awake: <https://uptimerobot.com> (free) → **New monitor → HTTP** → your Render URL → every 5 minutes. The bot serves a tiny web page for exactly this.
+4. Free Render wipes its disk on restart; `CONFIG_CHANNEL_ID` is how it survives — settings are backed up as a file in that channel and restored on boot.
 
-**Option A — Render (free, no server to manage)**
-1. Put this folder on GitHub: create a new repo → **Add file → Upload files** → drag everything in → Commit.
-2. <https://render.com> → **New → Blueprint** → connect the repo (it reads `render.yaml`).
-3. Fill in the environment variables it asks for: `DISCORD_TOKEN`, `ALERT_CHANNEL_ID`, `CONFIG_CHANNEL_ID`, `GUILD_ID`, `BESTBUY_API_KEY`. Deploy.
-4. Render's free tier sleeps after 15 idle minutes, so keep it awake: <https://uptimerobot.com> (free) → **New monitor → HTTP** → paste your Render URL (`https://tcg-restock-bot-xxxx.onrender.com`) → every 5 minutes. That's it — the bot has a tiny web page for exactly this.
-5. Free Render wipes its disk on every restart. That's why `CONFIG_CHANNEL_ID` matters: the bot backs up everyone's `/track` settings, shops, SKUs and drops as a file in that channel and restores them on boot. Don't delete the newest backup message.
+**Your own Windows PC** — install Python 3.11+ (tick "Add to PATH"), copy `.env.example` to `.env`, fill it in, double-click `start.bat`. Runs while the PC is on.
 
-**Option B — Your own PC / a spare laptop (Windows)**
-Install Python 3.11+ from python.org (tick "Add to PATH"). Copy `.env.example` to `.env`, fill it in, double-click `start.bat`. It only runs while the PC is on.
+**Oracle Cloud "Always Free" VM** — truly 24/7 and the least blocked by Target, but it's Linux setup: create the free ARM instance (Ubuntu), `sudo apt install python3-pip -y`, upload the folder, `pip install -r requirements.txt`, fill in `.env`, run `nohup python3 bot.py &`.
 
-**Option C — Oracle Cloud "Always Free" VM (truly 24/7, more setup)**
-Create the free ARM instance (Ubuntu), then: `sudo apt install python3-pip -y`, upload the folder, `pip install -r requirements.txt`, fill in `.env`, and run it with `nohup python3 bot.py &` (or a systemd service). Best option if you don't want the UptimeRobot dance.
-
-### 4. Test the store checks first (recommended)
-From the folder, with your `.env` filled in:
+### 3. Test the store checks first (recommended for either mode)
+From the folder, with `.env` filled in (`BESTBUY_API_KEY` at least):
 ```
 pip install -r requirements.txt
 python selftest.py 80202 50
 ```
-It prints every item in stock in that circle, which retailer checks pass (✅) or fail (❌) and why, upcoming drops, and the latest news. If Target shows ❌ "HTTP 404/410", its web key rotated — see Troubleshooting.
-
-### 5. Use it
-In Discord: `/track zip:80202 radius:50`. The first scan only takes a snapshot (no spam); after that you get pinged on every change. Add your local shops with `/addshop`.
+It prints every item in stock in that circle, which retailer checks pass (✅) or fail (❌) and why, upcoming drops, and the latest news.
 
 ---
 
 ## Settings (environment variables)
+
+GitHub mode reads `config.json` plus these secrets: `DISCORD_WEBHOOK` (required), `BESTBUY_API_KEY`, `NEWS_WEBHOOK`, `TARGET_KEY`. Live-bot mode uses the environment variables below.
 
 | Variable | Required | What it does |
 |---|---|---|
@@ -104,6 +130,8 @@ In Discord: `/track zip:80202 radius:50`. The first scan only takes a snapshot (
 
 ## Troubleshooting
 
+- **GitHub run is red ✗** — open the run → "Scan stores" step. A `config.json` error says exactly which line; "every source failed" usually means the secrets weren't saved.
+- **GitHub runs stopped after a couple of months** — GitHub pauses schedules on idle repos; the state commits normally prevent that, but if it happens: Actions tab → the workflow → **Enable**.
 - **Slash commands don't show up** — set `GUILD_ID`; without it Discord can take an hour. Also make sure you invited the bot with the `applications.commands` scope.
 - **`/status` shows Target ❌ "HTTP 404" or "410"** — Target rotated its web key. Open target.com in Chrome → F12 → **Network** tab → load any product page → click a request whose name starts with `product_summary` or `pdp_client` → copy the `key=` value from its URL → set it as `TARGET_KEY`. Takes two minutes.
 - **Target ❌ "every availability call failed"** — your host's IP is being blocked. Raise `SCAN_INTERVAL_MIN` to 15 and lower `MAX_TARGET_STORES`. Oracle VMs get blocked less than Render.
@@ -118,4 +146,4 @@ In Discord: `/track zip:80202 radius:50`. The first scan only takes a snapshot (
 ## How it works (short version)
 Every scan: look up Target stores within each tracker's radius → search Target/Best Buy for Pokémon & Yu-Gi-Oh! product (titles filtered so plush, binders and sleeves don't count) → check every store for every product → compare with the last scan → post only what newly flipped to in stock, @-mentioning each person whose circle contains that store, with the distance. New product pages and street dates feed the drop calendar; RSS feeds feed the news channel; a digest posts each morning when something is coming up.
 
-Files: `bot.py` (Discord), `engine.py` (what's new / who to ping), `checkers/` (one file per source), `state.py` (settings), `selftest.py` (command-line test).
+Files: `scan_once.py` (GitHub mode entry point) · `bot.py` (live bot) · `engine.py` (what's new / who to ping) · `checkers/` (one file per source) · `render.py` (the Discord messages) · `state.py` (settings) · `selftest.py` (command-line test) · `.github/workflows/scan.yml` (the schedule).

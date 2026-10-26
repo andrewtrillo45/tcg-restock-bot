@@ -1,0 +1,20 @@
+{
+  "_help": "Copy this file to config.json and edit. Zips must be real 5-digit US zips. discord_user_id is optional (right-click a user -> Copy User ID) and only controls @-mentions.",
+  "trackers": [
+    {"name": "Andrew", "zip": "CHANGE-ME", "radius": 50, "games": ["pokemon", "yugioh"], "discord_user_id": "", "online": true}
+  ],
+  "shops": [
+    {"name": "Example Card Shop", "url": "https://example-cards.com/collections/pokemon-sealed", "zip": "", "all": false}
+  ],
+  "pages": [
+    {"name": "Example Walmart listing", "url": "https://www.walmart.com/ip/000000000"}
+  ],
+  "pinned_skus": [
+    {"retailer": "target", "id": "", "name": ""}
+  ],
+  "drops": [
+    {"name": "Example: Phantasmal Flames Elite Trainer Box", "date": "2099-01-01", "game": "pokemon", "url": ""}
+  ],
+  "feeds": [],
+  "settings": {"timezone": "America/Denver", "digest_hour": 9, "realert_hours": 6, "max_target_stores": 20}
+}

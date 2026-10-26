@@ -1,0 +1,58 @@
+# Runs the stock scan every 10 minutes on GitHub's free runners and posts to Discord.
+# Needs repository secrets: DISCORD_WEBHOOK (required), BESTBUY_API_KEY (recommended),
+# NEWS_WEBHOOK and TARGET_KEY (optional). Edit config.json to change who tracks what.
+name: TCG stock scan
+
+on:
+  schedule:
+    - cron: "3-59/10 * * * *"      # every 10 min, offset from :00 so it isn't queued behind everyone else
+  workflow_dispatch:
+    inputs:
+      post_everything:
+        description: "Post everything currently in stock (not just new changes)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write                   # to commit state/ back (what was already alerted)
+
+concurrency:
+  group: tcg-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Scan stores and post to Discord
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          NEWS_WEBHOOK: ${{ secrets.NEWS_WEBHOOK }}
+          BESTBUY_API_KEY: ${{ secrets.BESTBUY_API_KEY }}
+          TARGET_KEY: ${{ secrets.TARGET_KEY }}
+          FORCE_ALERT: ${{ github.event.inputs.post_everything == 'true' && '1' || '' }}
+        run: python scan_once.py
+
+      - name: Remember what was alerted
+        if: always()
+        run: |
+          git config user.name "tcg-restock-bot"
+          git config user.email "tcg-restock-bot@users.noreply.github.com"
+          git add -A state
+          if git diff --cached --quiet; then
+            echo "state unchanged"
+          else
+            git commit -m "state: $(date -u '+%Y-%m-%d %H:%M UTC')"
+            git pull --rebase --autostash || true
+            git push
+          fi

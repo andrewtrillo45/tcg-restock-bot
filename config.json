@@ -1,0 +1,11 @@
+{
+  "trackers": [
+    {"name": "Andrew", "zip": "CHANGE-ME", "radius": 50, "games": ["pokemon", "yugioh"], "discord_user_id": "", "online": true}
+  ],
+  "shops": [],
+  "pages": [],
+  "pinned_skus": [],
+  "drops": [],
+  "feeds": [],
+  "settings": {"timezone": "America/Denver", "digest_hour": 9, "realert_hours": 6, "max_target_stores": 20}
+}

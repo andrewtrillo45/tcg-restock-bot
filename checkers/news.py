@@ -158,7 +158,7 @@ class NewsChecker:
             source = re.sub(r"^www\.", "", url.split("/")[2]) if "//" in url else url
             status, text, _ = await self.fetcher.get_text(url, headers={"Accept": "application/rss+xml, application/xml, text/xml, */*"})
             if status != 200 or not text:
-                self.errors[source] = f"HTTP {status}"
+                self.errors[source] = f"{source}: HTTP {status}"
                 continue
             try:
                 out += [n for n in parse_feed(text, source) if self.relevant(n)]
@@ -169,5 +169,5 @@ class NewsChecker:
         ok = len(feeds) - len(self.errors)
         self.last_summary = f"{ok}/{len(feeds)} feeds ok · {len(self._cache)} relevant articles"
         if feeds and ok == 0:
-            raise RuntimeError("every news feed failed: " + "; ".join(f"{k}: {v}" for k, v in self.errors.items()))
+            raise RuntimeError("every news feed failed: " + "; ".join(self.errors.values()))
         return self._cache

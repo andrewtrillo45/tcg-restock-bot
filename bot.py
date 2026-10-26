@@ -24,6 +24,8 @@ from engine import Engine
 from geo import lookup_zip, valid_zip
 from http_client import AiohttpFetcher
 from models import Alert, Product
+from render import (RETAILER_LABEL, SKU_WORD, alert_message, digest_text, drop_message, games_label,
+                    listing_message, news_message, nice_date, status_lines)
 from state import ALL_GAMES, State
 
 try:  # optional: lets you keep secrets in a .env file
@@ -51,26 +53,6 @@ REALERT_HOURS = float(os.getenv("REALERT_HOURS", "6"))
 MAX_TARGET_STORES = int(os.getenv("MAX_TARGET_STORES", "20"))
 DATA_DIR = os.getenv("DATA_DIR", "data")
 PORT = int(os.getenv("PORT", "8080") or 8080)                        # keep-alive web page
-
-COLORS = {"target": 0xCC0000, "bestbuy": 0x0046BE, "shop": 0x2E8B57, "url": 0x7289DA, "news": 0xF1C40F}
-RETAILER_LABEL = {"target": "Target", "bestbuy": "Best Buy", "shop": "Local shop", "url": "Online",
-                  "manual": "added by hand", "news": "news"}
-SKU_WORD = {"target": "TCIN", "bestbuy": "SKU"}
-
-
-def games_label(games: list[str]) -> str:
-    return " + ".join(filters.GAMES[g]["label"] for g in games if g in filters.GAMES) or "—"
-
-
-def nice_date(iso: str) -> str:
-    try:
-        d = datetime.strptime(iso, "%Y-%m-%d").date()
-    except Exception:
-        return iso
-    delta = (d - datetime.now(ZoneInfo(TZ)).date()).days
-    when = "today" if delta == 0 else "tomorrow" if delta == 1 else f"in {delta} days" if delta > 1 else f"{-delta}d ago"
-    return f"{d.strftime('%a %b %d')} ({when})"
-
 
 def ago(ts: float | None) -> str:
     if not ts:
@@ -162,43 +144,23 @@ class RestockBot(discord.Client):
                 log.exception("could not post news")
         return alerts
 
+    async def _post(self, channel_id: int, content: str, embed: dict) -> None:
+        ch = await self.channel(channel_id)
+        if ch:
+            await ch.send(content=content, embed=discord.Embed.from_dict(embed))
+
     async def post_listing(self, prod: Product) -> None:
         """A retailer created a product page — usually days/weeks before launch."""
-        spec = filters.GAMES.get(prod.game, {"label": "TCG", "emoji": "🃏"})
-        retailer = RETAILER_LABEL.get(prod.retailer, prod.retailer)
-        embed = discord.Embed(title=prod.title[:256], url=prod.url or None,
-                              color=COLORS.get(prod.retailer, 0x999999),
-                              description=(f"{SKU_WORD.get(prod.retailer, 'ID')} `{prod.id}`"
-                                           + (f" · 💲 {prod.price}" if prod.price else "")
-                                           + (f"\n📅 Street date: **{nice_date(prod.release_date)}**" if prod.release_date else "")))
-        if prod.image:
-            embed.set_thumbnail(url=prod.image)
-        embed.set_footer(text=f"{retailer} · new listing spotted · stock checks start now")
-        ch = await self.channel(NEWS_CHANNEL_ID or ALERT_CHANNEL_ID)
-        if ch:
-            await ch.send(content=f"👀 {spec['emoji']} **New {spec['label']} listing at {retailer}**", embed=embed)
+        content, embed = listing_message(prod)
+        await self._post(NEWS_CHANNEL_ID or ALERT_CHANNEL_ID, content, embed)
 
     async def post_drop(self, d: dict) -> None:
-        spec = filters.GAMES.get(d.get("game"), {"label": "TCG", "emoji": "🃏"})
-        src = RETAILER_LABEL.get(d.get("source", ""), d.get("source", ""))
-        embed = discord.Embed(title=d["name"][:256], url=d.get("url") or None, color=COLORS["news"],
-                              description=f"📅 **{nice_date(d['date'])}**" +
-                              (f" · {SKU_WORD.get(d.get('retailer', ''), 'ID')} `{d['sku']}`" if d.get("sku") else ""))
-        embed.set_footer(text=f"release date from {src} · /drops for the full list")
-        ch = await self.channel(NEWS_CHANNEL_ID or ALERT_CHANNEL_ID)
-        if ch:
-            await ch.send(content=f"🗓️ {spec['emoji']} **{spec['label']} drop date confirmed**", embed=embed)
+        content, embed = drop_message(d)
+        await self._post(NEWS_CHANNEL_ID or ALERT_CHANNEL_ID, content, embed)
 
     async def post_news(self, n: NewsItem) -> None:
-        spec = filters.GAMES.get(n.game, {"label": "TCG", "emoji": "🃏"})
-        desc = n.summary[:220] + ("…" if len(n.summary) > 220 else "")
-        if n.release_date:
-            desc = f"📅 Mentions **{nice_date(n.release_date)}** — if that's a drop, pin it with `/adddrop`\n{desc}"
-        embed = discord.Embed(title=n.title[:256], url=n.link or None, color=COLORS["news"], description=desc)
-        embed.set_footer(text=f"{n.source} · {datetime.fromtimestamp(n.published).strftime('%b %d')}")
-        ch = await self.channel(NEWS_CHANNEL_ID or ALERT_CHANNEL_ID)
-        if ch:
-            await ch.send(content=f"📰 {spec['emoji']} **{spec['label']} news**", embed=embed)
+        content, embed = news_message(n, interactive=True)
+        await self._post(NEWS_CHANNEL_ID or ALERT_CHANNEL_ID, content, embed)
 
     # ---------- daily drops digest ----------
     async def _digest_forever(self) -> None:
@@ -216,22 +178,7 @@ class RestockBot(discord.Client):
                 log.exception("digest failed")
 
     def digest_text(self, days: int = 14) -> str:
-        today = datetime.now(ZoneInfo(TZ)).date().isoformat()
-        ups = self.state.upcoming_drops(days)
-        lines = []
-        todays = [d for d in ups if d["date"] == today]
-        if todays:
-            lines.append("🚨 **DROPS TODAY** — check Target/Best Buy/Walmart/GameStop this morning:")
-            lines += [f"• {filters.GAMES.get(d['game'], {}).get('emoji', '🃏')} **{d['name']}**"
-                      + (f" — {RETAILER_LABEL.get(d.get('retailer', ''), '')} {SKU_WORD.get(d.get('retailer', ''), '')} `{d['sku']}`" if d.get("sku") else "")
-                      for d in todays]
-            lines.append("")
-        later = [d for d in ups if d["date"] != today]
-        lines.append(f"📅 **Coming up (next {days} days)**" if later else f"📅 Nothing else on the calendar for the next {days} days — add drops with `/adddrop`.")
-        for d in later[:20]:
-            lines.append(f"• {nice_date(d['date'])} — {filters.GAMES.get(d['game'], {}).get('emoji', '🃏')} {d['name']}"
-                         + (f" ({RETAILER_LABEL.get(d.get('retailer', ''), d.get('source', ''))})" if d.get("retailer") else ""))
-        return "\n".join(lines)[:1990]
+        return digest_text(self.state, days, interactive=True)
 
     async def post_digest(self) -> None:
         ch = await self.channel(NEWS_CHANNEL_ID or ALERT_CHANNEL_ID)
@@ -239,7 +186,8 @@ class RestockBot(discord.Client):
             await ch.send(self.digest_text(14))
 
     async def post_alert(self, a: Alert) -> None:
-        content, embed = render_alert(a)
+        content, embed_dict = alert_message(a)
+        embed = discord.Embed.from_dict(embed_dict)
         channel = await self.channel(ALERT_CHANNEL_ID)
         if channel is not None:
             await channel.send(content=content, embed=embed,
@@ -305,41 +253,6 @@ class RestockBot(discord.Client):
         except Exception as e:
             log.warning("restore failed: %s", e)
         return False
-
-
-# ---------- rendering ----------
-def render_alert(a: Alert) -> tuple[str, discord.Embed]:
-    prod = a.product
-    spec = filters.GAMES.get(prod.game, {"label": "Trading cards", "emoji": "🃏"})
-    retailer = RETAILER_LABEL.get(prod.retailer, prod.retailer)
-    if prod.retailer == "shop" and a.hits and a.hits[0].store:
-        retailer = a.hits[0].store.name
-    embed = discord.Embed(title=prod.title[:256], url=prod.url or None,
-                          color=COLORS.get(prod.retailer, 0x999999))
-    if prod.image:
-        embed.set_thumbnail(url=prod.image)
-    desc = []
-    if prod.price:
-        desc.append(f"💲 {prod.price}")
-    if a.kind == "local":
-        header = f"{spec['emoji']} **{spec['label']}** — **{retailer}** has it in stock near you"
-        lines = []
-        for h in a.hits[:12]:
-            qty = f"{h.qty} left · " if h.qty is not None else ""
-            lines.append(f"🏬 **{h.store.label}** — {qty}{h.note}")
-        if len(a.hits) > 12:
-            lines.append(f"…and {len(a.hits) - 12} more stores")
-        embed.add_field(name="Where", value="\n".join(lines)[:1024], inline=False)
-        mentions = ", ".join(f"<@{uid}> ({mi} mi)" for uid, mi in a.recipients[:30])
-    else:
-        site = a.hits[0].note if a.hits else "online"
-        header = f"🌐 {spec['emoji']} **{spec['label']}** — {retailer} restock {site}"
-        mentions = ", ".join(f"<@{uid}>" for uid, _ in a.recipients[:30])
-    desc.append("Go now — stock moves fast. Double-check in the app before you drive.")
-    embed.description = "\n".join(desc)
-    embed.set_footer(text=f"{retailer} · {datetime.now().strftime('%b %d %I:%M %p')}")
-    content = header + (f"\n{mentions}" if mentions else "")
-    return content[:1990], embed
 
 
 # ---------- keep-alive web page (Render/UptimeRobot) ----------
@@ -433,16 +346,7 @@ def register_commands(bot: RestockBot) -> None:
 
     @tree.command(name="status", description="Is the bot healthy? What is it watching?")
     async def status(inter: discord.Interaction):
-        e = bot.engine
-        lines = [f"Last scan: {ago(e.last_scan_at)} (took {int(e.last_scan_secs)}s) · "
-                 f"scans: {e.scans} · every {SCAN_INTERVAL_MIN:g} min"]
-        for ch in list(e.checkers) + ([e.news] if e.news else []):
-            st, detail = e.health.get(ch.name, ("idle", "not run yet"))
-            icon = "✅" if st == "ok" else ("❌" if st == "error" else "⏳")
-            lines.append(f"{icon} **{ch.label}** — {detail}")
-        lines.append(f"Trackers: {len(bot.state.trackers)} · Shops: {len(bot.state.shops)} · "
-                     f"Watched pages: {len(bot.state.urls)} · Pinned SKUs: {len(bot.state.skus)} · "
-                     f"Upcoming drops: {len(bot.state.upcoming_drops(365))}")
+        lines = status_lines(bot.engine, bot.state, SCAN_INTERVAL_MIN, ago)
         t = bot.state.trackers.get(str(inter.user.id))
         if t:
             lines.append(f"Your circle: {t['zip']} ({t['city']}, {t['state']}) · {t['radius']} mi · "
