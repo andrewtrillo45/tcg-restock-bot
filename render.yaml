@@ -1,0 +1,27 @@
+# One-click deploy on Render (free plan). New -> Blueprint -> pick this repo.
+services:
+  - type: web
+    name: tcg-restock-bot
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: DISCORD_TOKEN
+        sync: false
+      - key: ALERT_CHANNEL_ID
+        sync: false
+      - key: CONFIG_CHANNEL_ID
+        sync: false
+      - key: GUILD_ID
+        sync: false
+      - key: BESTBUY_API_KEY
+        sync: false
+      - key: NEWS_CHANNEL_ID
+        sync: false
+      - key: TZ_NAME
+        value: America/Denver
+      - key: SCAN_INTERVAL_MIN
+        value: "10"

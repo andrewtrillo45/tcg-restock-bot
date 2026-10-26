@@ -1,0 +1,647 @@
+"""TCG Restock Bot — Discord alerts for Pokémon & Yu-Gi-Oh! stock near you.
+
+Run:  python bot.py          (needs DISCORD_TOKEN and ALERT_CHANNEL_ID in .env or the environment)
+Test: python selftest.py 80202 50   (checks the stores from the command line, no Discord needed)
+"""
+from __future__ import annotations
+
+import asyncio
+import io
+import logging
+import os
+import time
+from datetime import datetime, timedelta, timezone
+
+import discord
+from discord import app_commands
+
+import filters
+from zoneinfo import ZoneInfo
+
+from checkers import BestBuyChecker, NewsChecker, PageWatchChecker, ShopifyChecker, TargetChecker
+from checkers.news import NewsItem
+from engine import Engine
+from geo import lookup_zip, valid_zip
+from http_client import AiohttpFetcher
+from models import Alert, Product
+from state import ALL_GAMES, State
+
+try:  # optional: lets you keep secrets in a .env file
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
+
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"),
+                    format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+log = logging.getLogger("bot")
+
+# ---------- configuration (environment variables) ----------
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "")
+ALERT_CHANNEL_ID = int(os.getenv("ALERT_CHANNEL_ID", "0") or 0)
+CONFIG_CHANNEL_ID = int(os.getenv("CONFIG_CHANNEL_ID", "0") or 0)   # optional: backups
+NEWS_CHANNEL_ID = int(os.getenv("NEWS_CHANNEL_ID", "0") or 0)       # optional: drops/news (else alert channel)
+DIGEST_HOUR = int(os.getenv("DIGEST_HOUR", "9") or 9)               # local hour for the daily drops digest
+TZ = os.getenv("TZ_NAME", "America/Denver")
+GUILD_ID = int(os.getenv("GUILD_ID", "0") or 0)                     # optional: instant commands
+BESTBUY_API_KEY = os.getenv("BESTBUY_API_KEY", "")
+TARGET_KEY = os.getenv("TARGET_KEY", "")                            # optional override
+SCAN_INTERVAL_MIN = float(os.getenv("SCAN_INTERVAL_MIN", "10"))
+REALERT_HOURS = float(os.getenv("REALERT_HOURS", "6"))
+MAX_TARGET_STORES = int(os.getenv("MAX_TARGET_STORES", "20"))
+DATA_DIR = os.getenv("DATA_DIR", "data")
+PORT = int(os.getenv("PORT", "8080") or 8080)                        # keep-alive web page
+
+COLORS = {"target": 0xCC0000, "bestbuy": 0x0046BE, "shop": 0x2E8B57, "url": 0x7289DA, "news": 0xF1C40F}
+RETAILER_LABEL = {"target": "Target", "bestbuy": "Best Buy", "shop": "Local shop", "url": "Online",
+                  "manual": "added by hand", "news": "news"}
+SKU_WORD = {"target": "TCIN", "bestbuy": "SKU"}
+
+
+def games_label(games: list[str]) -> str:
+    return " + ".join(filters.GAMES[g]["label"] for g in games if g in filters.GAMES) or "—"
+
+
+def nice_date(iso: str) -> str:
+    try:
+        d = datetime.strptime(iso, "%Y-%m-%d").date()
+    except Exception:
+        return iso
+    delta = (d - datetime.now(ZoneInfo(TZ)).date()).days
+    when = "today" if delta == 0 else "tomorrow" if delta == 1 else f"in {delta} days" if delta > 1 else f"{-delta}d ago"
+    return f"{d.strftime('%a %b %d')} ({when})"
+
+
+def ago(ts: float | None) -> str:
+    if not ts:
+        return "never"
+    s = int(time.time() - ts)
+    return f"{s}s ago" if s < 90 else f"{s // 60} min ago"
+
+
+class RestockBot(discord.Client):
+    def __init__(self):
+        intents = discord.Intents.default()
+        super().__init__(intents=intents)
+        self.tree = app_commands.CommandTree(self)
+        self.state = State(os.path.join(DATA_DIR, "state.json"))
+        self.fetcher = AiohttpFetcher()
+        self.engine: Engine | None = None
+        self.scan_lock = asyncio.Lock()
+        self._ready_once = False
+        self._had_local_state = False
+
+    # ---------- lifecycle ----------
+    async def setup_hook(self) -> None:
+        self._had_local_state = self.state.load_file()
+        checkers = [
+            TargetChecker(self.fetcher, key=TARGET_KEY or None, max_stores=MAX_TARGET_STORES),
+            BestBuyChecker(self.fetcher, BESTBUY_API_KEY),
+            ShopifyChecker(self.fetcher),
+            PageWatchChecker(self.fetcher),
+        ]
+        self.engine = Engine(self.state, checkers, os.path.join(DATA_DIR, "seen.json"),
+                             realert_hours=REALERT_HOURS, news=NewsChecker(self.fetcher))
+        register_commands(self)
+        if GUILD_ID:
+            guild = discord.Object(id=GUILD_ID)
+            self.tree.copy_global_to(guild=guild)
+            await self.tree.sync(guild=guild)
+            log.info("slash commands synced to guild %s", GUILD_ID)
+        else:
+            await self.tree.sync()
+            log.info("slash commands synced globally (can take up to an hour to appear)")
+        asyncio.create_task(start_keepalive(self))
+        asyncio.create_task(self._scan_forever())
+        asyncio.create_task(self._digest_forever())
+
+    async def on_ready(self) -> None:
+        if self._ready_once:
+            return
+        self._ready_once = True
+        log.info("logged in as %s", self.user)
+        if not self._had_local_state and CONFIG_CHANNEL_ID:
+            if await self.restore_state():
+                log.info("restored tracker list from the config channel backup")
+
+    async def _scan_forever(self) -> None:
+        await self.wait_until_ready()
+        await asyncio.sleep(5)
+        while not self.is_closed():
+            try:
+                await self.run_scan()
+            except Exception:
+                log.exception("scan crashed")
+            await asyncio.sleep(SCAN_INTERVAL_MIN * 60)
+
+    # ---------- scanning & alerting ----------
+    async def run_scan(self, force_alert: bool = False) -> list[Alert]:
+        async with self.scan_lock:
+            alerts = await self.engine.scan(force_alert=force_alert)
+            news = await self.engine.scan_news()
+            self.state.prune_drops()
+        for a in alerts:
+            try:
+                await self.post_alert(a)
+            except Exception:
+                log.exception("could not post alert")
+        for prod in self.engine.new_listings:
+            try:
+                await self.post_listing(prod)
+            except Exception:
+                log.exception("could not post listing")
+        for d in self.engine.new_drops:
+            try:
+                await self.post_drop(d)
+            except Exception:
+                log.exception("could not post drop")
+        for n in news:
+            try:
+                await self.post_news(n)
+            except Exception:
+                log.exception("could not post news")
+        return alerts
+
+    async def post_listing(self, prod: Product) -> None:
+        """A retailer created a product page — usually days/weeks before launch."""
+        spec = filters.GAMES.get(prod.game, {"label": "TCG", "emoji": "🃏"})
+        retailer = RETAILER_LABEL.get(prod.retailer, prod.retailer)
+        embed = discord.Embed(title=prod.title[:256], url=prod.url or None,
+                              color=COLORS.get(prod.retailer, 0x999999),
+                              description=(f"{SKU_WORD.get(prod.retailer, 'ID')} `{prod.id}`"
+                                           + (f" · 💲 {prod.price}" if prod.price else "")
+                                           + (f"\n📅 Street date: **{nice_date(prod.release_date)}**" if prod.release_date else "")))
+        if prod.image:
+            embed.set_thumbnail(url=prod.image)
+        embed.set_footer(text=f"{retailer} · new listing spotted · stock checks start now")
+        ch = await self.channel(NEWS_CHANNEL_ID or ALERT_CHANNEL_ID)
+        if ch:
+            await ch.send(content=f"👀 {spec['emoji']} **New {spec['label']} listing at {retailer}**", embed=embed)
+
+    async def post_drop(self, d: dict) -> None:
+        spec = filters.GAMES.get(d.get("game"), {"label": "TCG", "emoji": "🃏"})
+        src = RETAILER_LABEL.get(d.get("source", ""), d.get("source", ""))
+        embed = discord.Embed(title=d["name"][:256], url=d.get("url") or None, color=COLORS["news"],
+                              description=f"📅 **{nice_date(d['date'])}**" +
+                              (f" · {SKU_WORD.get(d.get('retailer', ''), 'ID')} `{d['sku']}`" if d.get("sku") else ""))
+        embed.set_footer(text=f"release date from {src} · /drops for the full list")
+        ch = await self.channel(NEWS_CHANNEL_ID or ALERT_CHANNEL_ID)
+        if ch:
+            await ch.send(content=f"🗓️ {spec['emoji']} **{spec['label']} drop date confirmed**", embed=embed)
+
+    async def post_news(self, n: NewsItem) -> None:
+        spec = filters.GAMES.get(n.game, {"label": "TCG", "emoji": "🃏"})
+        desc = n.summary[:220] + ("…" if len(n.summary) > 220 else "")
+        if n.release_date:
+            desc = f"📅 Mentions **{nice_date(n.release_date)}** — if that's a drop, pin it with `/adddrop`\n{desc}"
+        embed = discord.Embed(title=n.title[:256], url=n.link or None, color=COLORS["news"], description=desc)
+        embed.set_footer(text=f"{n.source} · {datetime.fromtimestamp(n.published).strftime('%b %d')}")
+        ch = await self.channel(NEWS_CHANNEL_ID or ALERT_CHANNEL_ID)
+        if ch:
+            await ch.send(content=f"📰 {spec['emoji']} **{spec['label']} news**", embed=embed)
+
+    # ---------- daily drops digest ----------
+    async def _digest_forever(self) -> None:
+        await self.wait_until_ready()
+        tz = ZoneInfo(TZ)
+        while not self.is_closed():
+            now = datetime.now(tz)
+            nxt = now.replace(hour=DIGEST_HOUR, minute=0, second=0, microsecond=0)
+            if nxt <= now:
+                nxt += timedelta(days=1)
+            await asyncio.sleep(max(60, (nxt - now).total_seconds()))
+            try:
+                await self.post_digest()
+            except Exception:
+                log.exception("digest failed")
+
+    def digest_text(self, days: int = 14) -> str:
+        today = datetime.now(ZoneInfo(TZ)).date().isoformat()
+        ups = self.state.upcoming_drops(days)
+        lines = []
+        todays = [d for d in ups if d["date"] == today]
+        if todays:
+            lines.append("🚨 **DROPS TODAY** — check Target/Best Buy/Walmart/GameStop this morning:")
+            lines += [f"• {filters.GAMES.get(d['game'], {}).get('emoji', '🃏')} **{d['name']}**"
+                      + (f" — {RETAILER_LABEL.get(d.get('retailer', ''), '')} {SKU_WORD.get(d.get('retailer', ''), '')} `{d['sku']}`" if d.get("sku") else "")
+                      for d in todays]
+            lines.append("")
+        later = [d for d in ups if d["date"] != today]
+        lines.append(f"📅 **Coming up (next {days} days)**" if later else f"📅 Nothing else on the calendar for the next {days} days — add drops with `/adddrop`.")
+        for d in later[:20]:
+            lines.append(f"• {nice_date(d['date'])} — {filters.GAMES.get(d['game'], {}).get('emoji', '🃏')} {d['name']}"
+                         + (f" ({RETAILER_LABEL.get(d.get('retailer', ''), d.get('source', ''))})" if d.get("retailer") else ""))
+        return "\n".join(lines)[:1990]
+
+    async def post_digest(self) -> None:
+        ch = await self.channel(NEWS_CHANNEL_ID or ALERT_CHANNEL_ID)
+        if ch and (self.state.upcoming_drops(14)):
+            await ch.send(self.digest_text(14))
+
+    async def post_alert(self, a: Alert) -> None:
+        content, embed = render_alert(a)
+        channel = await self.channel(ALERT_CHANNEL_ID)
+        if channel is not None:
+            await channel.send(content=content, embed=embed,
+                               allowed_mentions=discord.AllowedMentions(users=True))
+        # optional DMs
+        plain = content.split("\n")[0]
+        for uid, _ in a.recipients:
+            t = self.state.trackers.get(str(uid))
+            if not t or not t.get("dm"):
+                continue
+            try:
+                user = self.get_user(int(uid)) or await self.fetch_user(int(uid))
+                await user.send(content=plain, embed=embed)
+            except Exception as e:
+                log.info("DM to %s failed: %s", uid, e)
+
+    async def channel(self, cid: int):
+        if not cid:
+            return None
+        ch = self.get_channel(cid)
+        if ch is None:
+            try:
+                ch = await self.fetch_channel(cid)
+            except Exception as e:
+                log.warning("channel %s unavailable: %s", cid, e)
+                return None
+        return ch
+
+    # ---------- state backup in Discord (survives disk wipes on free hosts) ----------
+    async def backup_state(self) -> None:
+        ch = await self.channel(CONFIG_CHANNEL_ID)
+        if ch is None:
+            return
+        try:
+            data = self.state.to_json().encode("utf-8")
+            stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+            await ch.send(content=f"🗂️ tracker backup · {stamp} — don't delete the newest one",
+                          file=discord.File(io.BytesIO(data), filename="state.json"))
+            # tidy older backups (newest first; keep the one we just posted)
+            old = [m async for m in ch.history(limit=50)
+                   if m.author.id == self.user.id and m.content.startswith("🗂️")]
+            for m in old[1:]:
+                try:
+                    await m.delete()
+                except Exception:
+                    pass
+        except Exception as e:
+            log.warning("backup failed: %s", e)
+
+    async def restore_state(self) -> bool:
+        ch = await self.channel(CONFIG_CHANNEL_ID)
+        if ch is None:
+            return False
+        try:
+            async for msg in ch.history(limit=50):
+                if msg.author.id != self.user.id:
+                    continue
+                for att in msg.attachments:
+                    if att.filename == "state.json":
+                        self.state.load_json((await att.read()).decode("utf-8"))
+                        self.state.save()
+                        return True
+        except Exception as e:
+            log.warning("restore failed: %s", e)
+        return False
+
+
+# ---------- rendering ----------
+def render_alert(a: Alert) -> tuple[str, discord.Embed]:
+    prod = a.product
+    spec = filters.GAMES.get(prod.game, {"label": "Trading cards", "emoji": "🃏"})
+    retailer = RETAILER_LABEL.get(prod.retailer, prod.retailer)
+    if prod.retailer == "shop" and a.hits and a.hits[0].store:
+        retailer = a.hits[0].store.name
+    embed = discord.Embed(title=prod.title[:256], url=prod.url or None,
+                          color=COLORS.get(prod.retailer, 0x999999))
+    if prod.image:
+        embed.set_thumbnail(url=prod.image)
+    desc = []
+    if prod.price:
+        desc.append(f"💲 {prod.price}")
+    if a.kind == "local":
+        header = f"{spec['emoji']} **{spec['label']}** — **{retailer}** has it in stock near you"
+        lines = []
+        for h in a.hits[:12]:
+            qty = f"{h.qty} left · " if h.qty is not None else ""
+            lines.append(f"🏬 **{h.store.label}** — {qty}{h.note}")
+        if len(a.hits) > 12:
+            lines.append(f"…and {len(a.hits) - 12} more stores")
+        embed.add_field(name="Where", value="\n".join(lines)[:1024], inline=False)
+        mentions = ", ".join(f"<@{uid}> ({mi} mi)" for uid, mi in a.recipients[:30])
+    else:
+        site = a.hits[0].note if a.hits else "online"
+        header = f"🌐 {spec['emoji']} **{spec['label']}** — {retailer} restock {site}"
+        mentions = ", ".join(f"<@{uid}>" for uid, _ in a.recipients[:30])
+    desc.append("Go now — stock moves fast. Double-check in the app before you drive.")
+    embed.description = "\n".join(desc)
+    embed.set_footer(text=f"{retailer} · {datetime.now().strftime('%b %d %I:%M %p')}")
+    content = header + (f"\n{mentions}" if mentions else "")
+    return content[:1990], embed
+
+
+# ---------- keep-alive web page (Render/UptimeRobot) ----------
+async def start_keepalive(bot: RestockBot) -> None:
+    try:
+        from aiohttp import web
+    except Exception:
+        return
+
+    async def index(_):
+        e = bot.engine
+        body = (f"tcg-restock-bot ok\nlast scan: {ago(e.last_scan_at) if e else 'n/a'}\n"
+                f"scans: {e.scans if e else 0}\ntrackers: {len(bot.state.trackers)}\n")
+        return web.Response(text=body)
+
+    app = web.Application()
+    app.router.add_get("/", index)
+    app.router.add_get("/health", index)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    await web.TCPSite(runner, "0.0.0.0", PORT).start()
+    log.info("keep-alive page listening on port %s", PORT)
+
+
+# ---------- slash commands ----------
+def register_commands(bot: RestockBot) -> None:
+    tree = bot.tree
+    GAME_CHOICES = [
+        app_commands.Choice(name="Pokémon + Yu-Gi-Oh!", value="both"),
+        app_commands.Choice(name="Pokémon only", value="pokemon"),
+        app_commands.Choice(name="Yu-Gi-Oh! only", value="yugioh"),
+    ]
+
+    @tree.command(name="track", description="Alert me when Pokémon / Yu-Gi-Oh! product is in stock near a ZIP")
+    @app_commands.describe(zip_code="5-digit ZIP code to center on", radius="Miles around it (default 50, max 100)",
+                           games="Which games (default both)", dm="Also DM me each alert",
+                           online="Also tell me about online restocks")
+    @app_commands.rename(zip_code="zip")
+    @app_commands.choices(games=GAME_CHOICES)
+    async def track(inter: discord.Interaction, zip_code: str,
+                    radius: app_commands.Range[int, 5, 100] = 50,
+                    games: app_commands.Choice[str] | None = None,
+                    dm: bool = False, online: bool = True):
+        await inter.response.defer(ephemeral=True)
+        if not valid_zip(zip_code):
+            return await inter.followup.send("That doesn't look like a 5-digit US ZIP code.", ephemeral=True)
+        info = await lookup_zip(bot.fetcher, zip_code)
+        if not info:
+            return await inter.followup.send(f"I couldn't find ZIP {zip_code}. Try a nearby one.", ephemeral=True)
+        g = (games.value if games else "both")
+        glist = list(ALL_GAMES) if g == "both" else [g]
+        bot.state.set_tracker(inter.user.id, inter.user.display_name, info, radius, glist, dm, online)
+        await bot.backup_state()
+        await inter.followup.send(
+            f"✅ Tracking **{games_label(glist)}** within **{radius} mi** of "
+            f"**{info['city']}, {info['state']} {info['zip']}**.\n"
+            f"Alerts post in <#{ALERT_CHANNEL_ID}>{' and your DMs' if dm else ''}. "
+            f"Use `/stock` any time to see what's in stock right now.", ephemeral=True)
+
+    @tree.command(name="untrack", description="Stop my stock alerts")
+    async def untrack(inter: discord.Interaction):
+        gone = bot.state.remove_tracker(inter.user.id)
+        if gone:
+            await bot.backup_state()
+        await inter.response.send_message("Alerts off." if gone else "You weren't tracking anything.",
+                                          ephemeral=True)
+
+    @tree.command(name="stock", description="What's in stock near me right now?")
+    async def stock(inter: discord.Interaction):
+        t = bot.state.trackers.get(str(inter.user.id))
+        if not t:
+            return await inter.response.send_message("Set your area first with `/track`.", ephemeral=True)
+        e = bot.engine
+        if e.last_scan_at is None:
+            return await inter.response.send_message("First scan hasn't finished yet — give it a minute.", ephemeral=True)
+        local, online = e.stock_for(t)
+        lines = [f"**Within {t['radius']} mi of {t['city']}, {t['state']}** (scanned {ago(e.last_scan_at)})"]
+        if local:
+            for h, d in local[:15]:
+                qty = f" · {h.qty} left" if h.qty is not None else ""
+                lines.append(f"• [{h.product.title[:70]}]({h.product.url}) — {h.store.label} · {d} mi{qty}")
+            if len(local) > 15:
+                lines.append(f"…and {len(local) - 15} more")
+        else:
+            lines.append("• Nothing in local stock right now.")
+        if online and t.get("online", True):
+            lines.append("\n**Online**")
+            for h in online[:10]:
+                lines.append(f"• [{h.product.title[:70]}]({h.product.url}) — {h.note}")
+        await inter.response.send_message("\n".join(lines)[:1990], ephemeral=True)
+
+    @tree.command(name="status", description="Is the bot healthy? What is it watching?")
+    async def status(inter: discord.Interaction):
+        e = bot.engine
+        lines = [f"Last scan: {ago(e.last_scan_at)} (took {int(e.last_scan_secs)}s) · "
+                 f"scans: {e.scans} · every {SCAN_INTERVAL_MIN:g} min"]
+        for ch in list(e.checkers) + ([e.news] if e.news else []):
+            st, detail = e.health.get(ch.name, ("idle", "not run yet"))
+            icon = "✅" if st == "ok" else ("❌" if st == "error" else "⏳")
+            lines.append(f"{icon} **{ch.label}** — {detail}")
+        lines.append(f"Trackers: {len(bot.state.trackers)} · Shops: {len(bot.state.shops)} · "
+                     f"Watched pages: {len(bot.state.urls)} · Pinned SKUs: {len(bot.state.skus)} · "
+                     f"Upcoming drops: {len(bot.state.upcoming_drops(365))}")
+        t = bot.state.trackers.get(str(inter.user.id))
+        if t:
+            lines.append(f"Your circle: {t['zip']} ({t['city']}, {t['state']}) · {t['radius']} mi · "
+                         f"{games_label(t['games'])} · DM {'on' if t['dm'] else 'off'} · "
+                         f"online alerts {'on' if t.get('online', True) else 'off'}")
+        await inter.response.send_message("\n".join(lines)[:1990], ephemeral=True)
+
+    @tree.command(name="list", description="Show the local shops and product pages being watched")
+    async def list_cmd(inter: discord.Interaction):
+        lines = ["**Local card shops**"]
+        lines += [f"• {s['name']} — <{s['url']}>" + (f" · {s.get('city','')}, {s.get('state','')}" if s.get('zip') else " · online only")
+                  for s in bot.state.shops] or ["• none yet (`/addshop`)"]
+        lines.append("\n**Watched product pages**")
+        lines += [f"• {u.get('name') or u['site']} — <{u['url']}>" for u in bot.state.urls] or ["• none yet (`/watchurl`)"]
+        await inter.response.send_message("\n".join(lines)[:1990], ephemeral=True)
+
+    @tree.command(name="addshop", description="Watch a local card shop's website (Shopify stores work best)")
+    @app_commands.describe(name="Shop name", url="Shop URL, or a collection URL like /collections/pokemon-sealed",
+                           zip_code="Shop's ZIP (so it counts as local)", all_products="Include singles, not just sealed")
+    @app_commands.rename(zip_code="zip")
+    @app_commands.default_permissions(manage_guild=True)
+    async def addshop(inter: discord.Interaction, name: str, url: str, zip_code: str | None = None,
+                      all_products: bool = False):
+        await inter.response.defer(ephemeral=True)
+        info = None
+        if zip_code:
+            info = await lookup_zip(bot.fetcher, zip_code)
+            if not info:
+                return await inter.followup.send(f"Couldn't find ZIP {zip_code}.", ephemeral=True)
+        if not url.lower().startswith("http"):
+            url = "https://" + url
+        shop = bot.state.add_shop(name, url, info, all_products)
+        await bot.backup_state()
+        where = f"{info['city']}, {info['state']}" if info else "online only"
+        await inter.followup.send(f"🛒 Watching **{shop['name']}** ({where}). It's checked on every scan; "
+                                  f"run `/status` after the next scan to confirm it loads.", ephemeral=True)
+
+    @tree.command(name="removeshop", description="Stop watching a local shop")
+    @app_commands.default_permissions(manage_guild=True)
+    async def removeshop(inter: discord.Interaction, name: str):
+        ok = bot.state.remove_shop(name)
+        if ok:
+            await bot.backup_state()
+        await inter.response.send_message("Removed." if ok else "No shop by that name.", ephemeral=True)
+
+    @tree.command(name="watchurl", description="Watch one product page (Walmart, GameStop, Costco, Pokémon Center…) for online stock")
+    @app_commands.describe(url="Product page link", name="What to call it in alerts")
+    @app_commands.default_permissions(manage_guild=True)
+    async def watchurl(inter: discord.Interaction, url: str, name: str | None = None):
+        if not url.lower().startswith("http"):
+            url = "https://" + url
+        w = bot.state.add_url(url, name)
+        await bot.backup_state()
+        await inter.response.send_message(f"👀 Watching **{w['name'] or w['site']}** — online stock only; "
+                                          f"these sites don't share store-level stock.", ephemeral=True)
+
+    @tree.command(name="unwatchurl", description="Stop watching a product page")
+    @app_commands.default_permissions(manage_guild=True)
+    async def unwatchurl(inter: discord.Interaction, url_or_name: str):
+        ok = bot.state.remove_url(url_or_name)
+        if ok:
+            await bot.backup_state()
+        await inter.response.send_message("Removed." if ok else "Nothing matched.", ephemeral=True)
+
+    # ----- drops / SKUs / news -----
+    @tree.command(name="drops", description="Upcoming Pokémon & Yu-Gi-Oh! release dates")
+    @app_commands.describe(days="How far ahead to look (default 60)")
+    async def drops(inter: discord.Interaction, days: app_commands.Range[int, 1, 365] = 60):
+        ups = bot.state.upcoming_drops(days)
+        if not ups:
+            return await inter.response.send_message(
+                f"No drops on the calendar for the next {days} days yet. Dates get added automatically when "
+                f"Best Buy/Target publish a street date, or by hand with `/adddrop`.", ephemeral=True)
+        lines = [f"📅 **Next {days} days** ({len(ups)} drops)"]
+        for d in ups[:30]:
+            emoji = filters.GAMES.get(d["game"], {}).get("emoji", "🃏")
+            src = RETAILER_LABEL.get(d.get("retailer") or d.get("source", ""), d.get("source", ""))
+            link = f"[{d['name']}]({d['url']})" if d.get("url") else d["name"]
+            sku = f" · {SKU_WORD.get(d.get('retailer', ''), 'ID')} `{d['sku']}`" if d.get("sku") else ""
+            lines.append(f"• **{nice_date(d['date'])}** — {emoji} {link}{sku} _({src})_")
+        await inter.response.send_message("\n".join(lines)[:1990], ephemeral=True)
+
+    @tree.command(name="adddrop", description="Add an upcoming release by hand (admin)")
+    @app_commands.describe(name="Product / set name", date="Release date, YYYY-MM-DD", games="Which game",
+                           url="Link (optional)")
+    @app_commands.choices(games=GAME_CHOICES[1:])
+    @app_commands.default_permissions(manage_guild=True)
+    async def adddrop(inter: discord.Interaction, name: str, date: str, games: app_commands.Choice[str],
+                      url: str | None = None):
+        try:
+            iso = datetime.strptime(date.strip(), "%Y-%m-%d").date().isoformat()
+        except ValueError:
+            return await inter.response.send_message("Date must look like `2026-11-14`.", ephemeral=True)
+        rec, _ = bot.state.upsert_drop(name.strip(), iso, games.value, source="manual", url=url or "")
+        await bot.backup_state()
+        await inter.response.send_message(f"🗓️ **{rec['name']}** — {nice_date(iso)}. It'll show in `/drops` "
+                                          f"and the morning digest.", ephemeral=True)
+
+    @tree.command(name="removedrop", description="Remove a release from the calendar (admin)")
+    @app_commands.default_permissions(manage_guild=True)
+    async def removedrop(inter: discord.Interaction, name: str):
+        ok = bot.state.remove_drop(name)
+        if ok:
+            await bot.backup_state()
+        await inter.response.send_message("Removed." if ok else "No drop by that name.", ephemeral=True)
+
+    @tree.command(name="skus", description="Which product pages (TCIN / SKU numbers) the bot is checking")
+    @app_commands.describe(games="Filter by game", search="Only titles containing this text")
+    @app_commands.choices(games=GAME_CHOICES)
+    async def skus(inter: discord.Interaction, games: app_commands.Choice[str] | None = None,
+                   search: str | None = None):
+        want = None if (games is None or games.value == "both") else games.value
+        rows = []
+        for ch in bot.engine.checkers:
+            for prod in getattr(ch, "known_products", {}).values():
+                if want and prod.game != want:
+                    continue
+                if search and search.lower() not in prod.title.lower():
+                    continue
+                rows.append(prod)
+        pinned = {(s["retailer"], s["id"]) for s in bot.state.skus}
+        if not rows:
+            return await inter.response.send_message(
+                "Nothing tracked yet — the first scan hasn't run, or nothing matched.", ephemeral=True)
+        rows.sort(key=lambda p: (p.retailer, p.game, p.title))
+        lines = [f"🔎 **{len(rows)} product pages being checked** (📌 = pinned with /addsku)"]
+        for p in rows[:40]:
+            pin = "📌 " if (p.retailer, p.id) in pinned else ""
+            rd = f" · 📅 {p.release_date}" if p.release_date else ""
+            lines.append(f"• {pin}{RETAILER_LABEL.get(p.retailer, p.retailer)} `{p.id}` — "
+                         f"[{p.title[:60]}]({p.url}){rd}")
+        if len(rows) > 40:
+            lines.append(f"…and {len(rows) - 40} more (narrow it with `search:`)")
+        await inter.response.send_message("\n".join(lines)[:1990], ephemeral=True)
+
+    @tree.command(name="addsku", description="Pin a Target TCIN or Best Buy SKU so it's always checked (admin)")
+    @app_commands.describe(retailer="Where the number is from", number="TCIN (Target, in the URL after A-) or SKU (Best Buy)",
+                           name="Optional label")
+    @app_commands.choices(retailer=[app_commands.Choice(name="Target (TCIN)", value="target"),
+                                    app_commands.Choice(name="Best Buy (SKU)", value="bestbuy")])
+    @app_commands.default_permissions(manage_guild=True)
+    async def addsku(inter: discord.Interaction, retailer: app_commands.Choice[str], number: str,
+                     name: str | None = None):
+        rec = bot.state.add_sku(retailer.value, number, name or "")
+        await bot.backup_state()
+        await inter.response.send_message(
+            f"📌 Pinned {RETAILER_LABEL[rec['retailer']]} {SKU_WORD[rec['retailer']]} `{rec['id']}`. "
+            f"It's checked on every scan from now on (first result after the next scan).", ephemeral=True)
+
+    @tree.command(name="removesku", description="Un-pin a TCIN / SKU (admin)")
+    @app_commands.default_permissions(manage_guild=True)
+    async def removesku(inter: discord.Interaction, number: str):
+        ok = bot.state.remove_sku(number)
+        if ok:
+            await bot.backup_state()
+        await inter.response.send_message("Un-pinned." if ok else "That number wasn't pinned.", ephemeral=True)
+
+    @tree.command(name="addfeed", description="Add an RSS/Atom news feed to watch for drop news (admin)")
+    @app_commands.default_permissions(manage_guild=True)
+    async def addfeed(inter: discord.Interaction, url: str):
+        if not url.lower().startswith("http"):
+            url = "https://" + url
+        ok = bot.state.add_feed(url)
+        if ok:
+            await bot.backup_state()
+        await inter.response.send_message(("📰 Added. " if ok else "Already watching that feed. ")
+                                          + f"Feeds now: {len(bot.engine.feeds())}", ephemeral=True)
+
+    @tree.command(name="removefeed", description="Stop watching a news feed (admin)")
+    @app_commands.default_permissions(manage_guild=True)
+    async def removefeed(inter: discord.Interaction, url: str):
+        ok = bot.state.remove_feed(url)
+        if ok:
+            await bot.backup_state()
+        await inter.response.send_message("Removed." if ok else "That feed isn't in your added list "
+                                          "(the two built-in feeds can't be removed; they're filtered by keyword).",
+                                          ephemeral=True)
+
+    @tree.command(name="scan", description="Run a scan right now (admin)")
+    @app_commands.describe(post_everything="Post everything currently in stock, not just new changes")
+    @app_commands.default_permissions(manage_guild=True)
+    async def scan(inter: discord.Interaction, post_everything: bool = False):
+        if bot.scan_lock.locked():
+            return await inter.response.send_message("A scan is already running.", ephemeral=True)
+        await inter.response.send_message("Scanning… results post in the alert channel.", ephemeral=True)
+        alerts = await bot.run_scan(force_alert=post_everything)
+        e = bot.engine
+        await inter.followup.send(f"Done in {int(e.last_scan_secs)}s — {len(e.last_hits)} items in stock, "
+                                  f"{len(alerts)} alert(s) posted. `/status` for details.", ephemeral=True)
+
+
+def main() -> None:
+    if not DISCORD_TOKEN:
+        raise SystemExit("DISCORD_TOKEN is not set. Copy .env.example to .env and fill it in.")
+    if not ALERT_CHANNEL_ID:
+        raise SystemExit("ALERT_CHANNEL_ID is not set (right-click the channel → Copy ID).")
+    os.makedirs(DATA_DIR, exist_ok=True)
+    RestockBot().run(DISCORD_TOKEN, log_handler=None)
+
+
+if __name__ == "__main__":
+    main()
