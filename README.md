@@ -32,7 +32,7 @@ No bot anywhere can see Walmart's or GameStop's shelf counts — if someone says
 - `/status` — is every retailer check working? (✅ / ❌)
 - `/list` — shops and pages being watched
 - `/untrack` — stop
-- `/tcg` — give yourself the TCG role (or remove it) to see #tcg-news
+- `/tcg` — give yourself the TCG role (or remove it) to see the TCG News channels
 
 **Admins** (Manage Server permission)
 - `/addshop name:"Bobs Cards" url:bobscards.com/collections/pokemon zip:80202` — watch a local shop; the ZIP makes it count as local
@@ -40,21 +40,21 @@ No bot anywhere can see Walmart's or GameStop's shelf counts — if someone says
 - `/addsku retailer:Target number:94300123` — pin a TCIN/SKU so it's always checked, even before the search finds it
 - `/adddrop name:"Phantasmal Flames ETB" date:2026-11-14 games:Pokémon` — put a release on the calendar
 - `/addfeed url:<rss>` — add a news feed
-- `/setup` — create the TCG role + private #tcg-news channel (see above)
+- `/setup` — create the TCG role + private TCG News category with #pokemon and #yugioh (see above)
 - `/scan` — run a scan now (`post_everything:true` posts all current stock)
 - `/removeshop`, `/unwatchurl`, `/removesku`, `/removedrop`, `/removefeed`
 
 ---
 
-## The #tcg-news channel and the TCG role
+## The "TCG News" category and the TCG role
 
-The bot can set up its own home in your server: a **TCG** role and a **#tcg-news** channel that only that role (and admins) can see. Everything the bot posts lands there.
+The bot builds its own home in your server: a **TCG** role, a private **TCG News** category, and two channels inside it — **#pokemon** and **#yugioh**. Only the TCG role (and admins) can see the category. Everything Pokémon — stock alerts, new listings, drop dates, news, the morning digest — posts in #pokemon; everything Yu-Gi-Oh! posts in #yugioh.
 
-- **Live bot:** type `/setup` once (needs the bot to have Manage Roles, Manage Channels, Manage Webhooks). Options: `chat:true` lets TCG members talk in it, `alerts_channel:true` also makes a separate #tcg-alerts, `category:"TCG"` files it under a category. Members then grab or drop the role with `/tcg`.
-- **GitHub mode (or before deploying):** `python setup_discord.py` does the same from your PC and prints the channel IDs and the webhook URLs to paste into the repo secrets (`NEWS_WEBHOOK` / `DISCORD_WEBHOOK`). It needs a bot token + server ID in `.env` and the bot invited with those three permissions. Flags: `--alerts-channel`, `--chat`, `--category "TCG"`.
-- **By hand (2 minutes):** Server Settings → Roles → Create Role "TCG" (mentionable). Create text channel "tcg-news" → Edit Channel → Permissions → turn on **Private Channel**, add the TCG role → under the TCG role, turn **Send Messages** off (read-only) and leave View Channel / Read Message History on. Then Integrations → Webhooks → New Webhook → copy the URL.
+- **Live bot:** type `/setup` once (the bot needs Manage Roles, Manage Channels, Manage Webhooks). Options: `chat:true` lets TCG members talk in the two channels, `general:true` adds a #tcg-chat they can talk in, `category:"Card News"` renames the category. Members then grab or drop the role with `/tcg`. The bot starts posting there right away — no redeploy.
+- **GitHub mode (or before deploying):** `python setup_discord.py` does the same from your PC and prints `POKEMON_WEBHOOK` and `YUGIOH_WEBHOOK` to paste into the repo secrets (plus the channel IDs for the live bot). It needs a bot token + server ID in `.env` and the bot invited with those three permissions. Flags: `--chat`, `--general`, `--category "Card News"`.
+- **By hand (3 minutes):** Server Settings → Roles → Create Role "TCG" (mentionable). Create a category "TCG News" → Edit Category → Permissions → **Private Category**, add the TCG role → under TCG turn **Send Messages** off (read-only). Create text channels `pokemon` and `yugioh` inside it (they inherit the permissions). In each channel: Integrations → Webhooks → New Webhook → copy the URL → repo secrets `POKEMON_WEBHOOK` / `YUGIOH_WEBHOOK`.
 
-Both commands and the script are safe to run again — they reuse what exists and re-apply the permissions.
+`/setup` and the script are safe to run again — they reuse what exists and re-apply the permissions. With only a single `DISCORD_WEBHOOK` / `ALERT_CHANNEL_ID` set, the bot posts everything in one channel instead.
 
 ---
 
@@ -75,13 +75,12 @@ Nothing in the code is secret — tokens and keys live in GitHub's encrypted Sec
 
 ## GitHub mode setup (15 minutes)
 
-1. **Discord webhook.** In Discord, open the channel's settings → **Integrations → Webhooks → New Webhook** → name it → **Copy Webhook URL**. (Make a second one in a news channel if you want drop news separate.)
+1. **Discord channels + webhooks.** Run `python setup_discord.py` (see the section above) or make them by hand; either way you end up with a webhook URL for #pokemon and one for #yugioh.
 2. **Best Buy key.** <https://developer.bestbuy.com> → sign up → the key is emailed to you. Without it, Best Buy is skipped.
 3. **Put the code on GitHub.** Create a new repository (public), then **Add file → Upload files** → drag everything from this folder in (including the `.github` folder — on Windows, show hidden files) → **Commit**.
 4. **Add the secrets.** Repo → **Settings → Secrets and variables → Actions → New repository secret**:
-   - `DISCORD_WEBHOOK` = the webhook URL (required)
+   - `POKEMON_WEBHOOK` and `YUGIOH_WEBHOOK` = the two webhook URLs from `setup_discord.py` (or one `DISCORD_WEBHOOK` for a single channel)
    - `BESTBUY_API_KEY` = your key (recommended)
-   - `NEWS_WEBHOOK` = second webhook (optional)
 5. **Say where you are.** Open `config.json` on GitHub → pencil icon → replace `CHANGE-ME` with your zip, set `discord_user_id` if you want @-mentions (Discord → Settings → Advanced → Developer Mode, then right-click yourself → Copy User ID) → Commit. Add friends as extra entries in `trackers`, local shops under `shops`, Walmart/GameStop pages under `pages`, known TCINs/SKUs under `pinned_skus`, and release dates under `drops`. `config.example.json` shows every field.
 6. **Turn it on.** Repo → **Actions** tab → enable workflows if asked → **TCG stock scan → Run workflow**. The first run only takes a snapshot (no spam). From then on it runs every 10 minutes by itself and posts only what newly came in stock. The green ✓ / red ✗ on each run tells you it's healthy; open a run → "Scan stores" to see each retailer's OK/FAIL line.
 
@@ -123,13 +122,14 @@ It prints every item in stock in that circle, which retailer checks pass (✅) o
 
 ## Settings (environment variables)
 
-GitHub mode reads `config.json` plus these secrets: `DISCORD_WEBHOOK` (required), `BESTBUY_API_KEY`, `NEWS_WEBHOOK`, `TARGET_KEY`. Live-bot mode uses the environment variables below.
+GitHub mode reads `config.json` plus these secrets: `POKEMON_WEBHOOK` + `YUGIOH_WEBHOOK` (or a single `DISCORD_WEBHOOK`), `BESTBUY_API_KEY`, `NEWS_WEBHOOK`, `TARGET_KEY`. Live-bot mode uses the environment variables below.
 
 | Variable | Required | What it does |
 |---|---|---|
 | `DISCORD_TOKEN` | yes | bot token |
 | `ALERT_CHANNEL_ID` | yes* | where stock alerts go (*or run `/setup` and the bot picks its own channel) |
-| `NEWS_CHANNEL_ID` | no | where drop news / new listings / digest go (default: alert channel) |
+| `POKEMON_CHANNEL_ID` / `YUGIOH_CHANNEL_ID` | no | per-game channels (`/setup` sets these for you) |
+| `NEWS_CHANNEL_ID` | no | fallback for news when the game channels aren't set |
 | `CONFIG_CHANNEL_ID` | on Render | private channel for backups |
 | `GUILD_ID` | no | your server ID → slash commands appear instantly instead of ~1 hour |
 | `BESTBUY_API_KEY` | recommended | free key, enables Best Buy |

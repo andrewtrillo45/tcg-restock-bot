@@ -41,6 +41,13 @@ CONFIG_PATH = os.getenv("CONFIG_PATH", "config.json")
 STATE_DIR = os.getenv("STATE_DIR", "state")
 WEBHOOK = os.getenv("DISCORD_WEBHOOK", "")
 NEWS_WEBHOOK = os.getenv("NEWS_WEBHOOK", "") or WEBHOOK
+GAME_WEBHOOKS = {"pokemon": os.getenv("POKEMON_WEBHOOK", ""), "yugioh": os.getenv("YUGIOH_WEBHOOK", "")}
+ANY_GAME = GAME_WEBHOOKS["pokemon"] or GAME_WEBHOOKS["yugioh"]
+
+
+def hook(game: str, kind: str) -> str:
+    """Which webhook a post goes to: the game's own channel if set, else alerts/news, else any game channel."""
+    return GAME_WEBHOOKS.get(game, "") or (NEWS_WEBHOOK if kind == "news" else WEBHOOK) or ANY_GAME
 FORCE_ALERT = os.getenv("FORCE_ALERT", "") in ("1", "true", "yes")
 
 
@@ -120,7 +127,8 @@ class Poster:
 
     async def send(self, webhook: str, content: str, embed: dict | None = None) -> None:
         if not webhook:
-            log.warning("no DISCORD_WEBHOOK set — would have posted: %s", content.splitlines()[0])
+            log.warning("no webhook set (DISCORD_WEBHOOK / POKEMON_WEBHOOK / YUGIOH_WEBHOOK) — would have posted: %s",
+                        content.splitlines()[0])
             return
         body = {"content": content, "allowed_mentions": {"parse": ["users"]}}
         if embed:
@@ -167,13 +175,13 @@ async def main() -> int:
         for a in alerts:
             a.recipients = [(u, m) for u, m in a.recipients if u.isdigit()]   # mention only real Discord IDs
             content, embed = alert_message(a)
-            await poster.send(WEBHOOK, content, embed)
+            await poster.send(hook(a.product.game, "alert"), content, embed)
         for prod in engine.new_listings:
-            await poster.send(NEWS_WEBHOOK, *listing_message(prod))
+            await poster.send(hook(prod.game, "news"), *listing_message(prod))
         for d in engine.new_drops:
-            await poster.send(NEWS_WEBHOOK, *drop_message(d))
+            await poster.send(hook(d.get("game", ""), "news"), *drop_message(d))
         for n in news:
-            await poster.send(NEWS_WEBHOOK, *news_message(n, interactive=False))
+            await poster.send(hook(n.game, "news"), *news_message(n, interactive=False))
 
         # morning digest, once per local day
         misc_path = os.path.join(STATE_DIR, "misc.json")
@@ -186,7 +194,11 @@ async def main() -> int:
         digest_hour = settings.get("digest_hour")
         digest_hour = 9 if digest_hour in (None, "") else int(digest_hour)
         if now.hour >= digest_hour and misc.get("last_digest") != today:
-            if state.upcoming_drops(14):
+            if ANY_GAME:
+                for game in ("pokemon", "yugioh"):
+                    if any(d.get("game") == game for d in state.upcoming_drops(14)):
+                        await poster.send(hook(game, "news"), digest_text(state, 14, interactive=False, game=game))
+            elif state.upcoming_drops(14):
                 await poster.send(NEWS_WEBHOOK, digest_text(state, 14, interactive=False))
             misc["last_digest"] = today
         misc["last_run"] = time.time()

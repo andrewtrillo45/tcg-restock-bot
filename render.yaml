@@ -21,6 +21,10 @@ services:
         sync: false
       - key: NEWS_CHANNEL_ID
         sync: false
+      - key: POKEMON_CHANNEL_ID
+        sync: false
+      - key: YUGIOH_CHANNEL_ID
+        sync: false
       - key: TZ_NAME
         value: America/Denver
       - key: SCAN_INTERVAL_MIN

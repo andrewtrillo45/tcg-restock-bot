@@ -131,9 +131,11 @@ def news_message(n: NewsItem, interactive: bool = True) -> tuple[str, dict]:
     return f"📰 {spec['emoji']} **{spec['label']} news**", embed
 
 
-def digest_text(state, days: int = 14, interactive: bool = True) -> str:
+def digest_text(state, days: int = 14, interactive: bool = True, game: str | None = None) -> str:
     today = today_iso()
     ups = state.upcoming_drops(days)
+    if game:
+        ups = [d for d in ups if d.get("game") == game]
     lines = []
     todays = [d for d in ups if d["date"] == today]
     if todays:
