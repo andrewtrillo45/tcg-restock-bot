@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": 1793057159.8581822,
+  "updated_at": 1793058957.6341705,
   "trackers": {
     "417503670071066624": {
       "user_id": "417503670071066624",
@@ -13,7 +13,8 @@
       "radius": 50,
       "games": [
         "pokemon",
-        "yugioh"
+        "yugioh",
+        "funko"
       ],
       "dm": false,
       "online": true,
