@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "updated_at": 1793052213.5232277,
+  "trackers": {
+    "417503670071066624": {
+      "user_id": "417503670071066624",
+      "name": "Andrew",
+      "zip": "79936",
+      "lat": 31.7677,
+      "lon": -106.3016,
+      "city": "El Paso",
+      "state": "TX",
+      "radius": 50,
+      "games": [
+        "pokemon",
+        "yugioh"
+      ],
+      "dm": false,
+      "online": true,
+      "since": 0
+    }
+  },
+  "shops": [],
+  "urls": [],
+  "skus": [],
+  "drops": [
+    {
+      "key": "target:1013166602",
+      "name": "Yu-Gi-Oh! Trading Card Game: Manificent Maestros Box",
+      "date": "2026-11-13",
+      "game": "yugioh",
+      "source": "target",
+      "url": "https://www.target.com/p/yu-gi-oh-trading-card-game-manificent-maestros-box/-/A-1013166602",
+      "retailer": "target",
+      "sku": "1013166602",
+      "added": 1793052213.158319
+    }
+  ],
+  "feeds": [],
+  "settings": {}
+}
