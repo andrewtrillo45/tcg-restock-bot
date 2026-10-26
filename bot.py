@@ -46,6 +46,7 @@ CONFIG_CHANNEL_ID = int(os.getenv("CONFIG_CHANNEL_ID", "0") or 0)   # optional: 
 NEWS_CHANNEL_ID = int(os.getenv("NEWS_CHANNEL_ID", "0") or 0)       # optional: drops/news (else alert channel)
 POKEMON_CHANNEL_ID = int(os.getenv("POKEMON_CHANNEL_ID", "0") or 0) # optional: everything Pokémon goes here
 YUGIOH_CHANNEL_ID = int(os.getenv("YUGIOH_CHANNEL_ID", "0") or 0)   # optional: everything Yu-Gi-Oh! goes here
+FUNKO_CHANNEL_ID = int(os.getenv("FUNKO_CHANNEL_ID", "0") or 0)     # optional: everything Funko goes here
 DIGEST_HOUR = int(os.getenv("DIGEST_HOUR", "9") or 9)               # local hour for the daily drops digest
 TZ = os.getenv("TZ_NAME", "America/Denver")
 GUILD_ID = int(os.getenv("GUILD_ID", "0") or 0)                     # optional: instant commands
@@ -85,7 +86,8 @@ class RestockBot(discord.Client):
             ShopifyChecker(self.fetcher),
             PageWatchChecker(self.fetcher),
             SearchPageChecker(self.fetcher, walmart=os.getenv("WALMART", "1") != "0",
-                              gamestop=os.getenv("GAMESTOP", "1") != "0"),
+                              gamestop=os.getenv("GAMESTOP", "1") != "0",
+                              hottopic=os.getenv("HOTTOPIC", "1") != "0", fye=os.getenv("FYE", "1") != "0"),
         ]
         self.engine = Engine(self.state, checkers, os.path.join(DATA_DIR, "seen.json"),
                              realert_hours=REALERT_HOURS, news=NewsChecker(self.fetcher))
@@ -188,7 +190,7 @@ class RestockBot(discord.Client):
     async def post_digest(self) -> None:
         """One digest per game channel when they're split, otherwise one combined digest."""
         if self.game_channel_id("pokemon") or self.game_channel_id("yugioh"):
-            for game in ("pokemon", "yugioh"):
+            for game in ("pokemon", "yugioh", "funko"):
                 if any(d.get("game") == game for d in self.state.upcoming_drops(14)):
                     ch = await self.channel(self.news_channel_id(game))
                     if ch:
@@ -218,7 +220,7 @@ class RestockBot(discord.Client):
                 log.info("DM to %s failed: %s", uid, e)
 
     def game_channel_id(self, game: str) -> int:
-        env = {"pokemon": POKEMON_CHANNEL_ID, "yugioh": YUGIOH_CHANNEL_ID}.get(game, 0)
+        env = {"pokemon": POKEMON_CHANNEL_ID, "yugioh": YUGIOH_CHANNEL_ID, "funko": FUNKO_CHANNEL_ID}.get(game, 0)
         return int(self.state.settings.get(f"{game}_channel_id") or env or 0)
 
     def news_channel_id(self, game: str = "") -> int:
@@ -311,6 +313,8 @@ def register_commands(bot: RestockBot) -> None:
         app_commands.Choice(name="Pokémon + Yu-Gi-Oh!", value="both"),
         app_commands.Choice(name="Pokémon only", value="pokemon"),
         app_commands.Choice(name="Yu-Gi-Oh! only", value="yugioh"),
+        app_commands.Choice(name="Funko Pops only", value="funko"),
+        app_commands.Choice(name="Cards + Funko (everything)", value="all"),
     ]
 
     @tree.command(name="track", description="Alert me when Pokémon / Yu-Gi-Oh! product is in stock near a ZIP")
@@ -330,7 +334,7 @@ def register_commands(bot: RestockBot) -> None:
         if not info:
             return await inter.followup.send(f"I couldn't find ZIP {zip_code}. Try a nearby one.", ephemeral=True)
         g = (games.value if games else "both")
-        glist = list(ALL_GAMES) if g == "both" else [g]
+        glist = ["pokemon", "yugioh"] if g == "both" else list(ALL_GAMES) if g == "all" else [g]
         bot.state.set_tracker(inter.user.id, inter.user.display_name, info, radius, glist, dm, online)
         await bot.backup_state()
         await inter.followup.send(
@@ -607,12 +611,15 @@ def register_commands(bot: RestockBot) -> None:
                            "Grab the TCG role to see this.",
                 "yugioh": "Yu-Gi-Oh! TCG: restocks near you, new listings, drop dates and news — posted by the bot. "
                           "Grab the TCG role to see this.",
+                "funko": "Funko Pops: drops, chases and exclusives at GameStop, Hot Topic, Walmart, FYE, Target, "
+                         "Best Buy — posted by the bot. Grab the TCG role to see this.",
             }
+            channel_names = {"pokemon": "pokemon", "yugioh": "yugioh", "funko": "funko-pops"}
             lines = [f"{'✅ created' if made_role else '✅ found'} role {role.mention}",
                      f"{'✅ created' if made_cat else '✅ updated'} category **{category}** — hidden from everyone else, "
                      f"{'TCG members can chat' if chat else 'read-only for TCG members'}"]
             for game, topic in topics.items():
-                ch, new = await ensure(game, topic, ow)
+                ch, new = await ensure(channel_names[game], topic, ow)
                 bot.state.settings[f"{game}_channel_id"] = ch.id
                 lines.append(f"{'✅ created' if new else '✅ updated'} {ch.mention} — all {filters.GAMES[game]['label']} "
                              f"stock alerts, listings, drops and news post here")
@@ -642,7 +649,7 @@ def register_commands(bot: RestockBot) -> None:
                 msg = "Removed the TCG role — you won't see #tcg-news anymore."
             else:
                 await member.add_roles(role, reason="/tcg toggle")
-                chans = " and ".join(f"<#{bot.game_channel_id(g)}>" for g in ("pokemon", "yugioh") if bot.game_channel_id(g))
+                chans = " and ".join(f"<#{bot.game_channel_id(g)}>" for g in ("pokemon", "yugioh", "funko") if bot.game_channel_id(g))
                 msg = f"You've got the {role.mention} role — {chans or 'the TCG News category'} is open to you now."
         except discord.Forbidden:
             msg = "❌ I can't change roles. The bot needs **Manage Roles** and its role must sit above TCG in the role list."

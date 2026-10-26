@@ -42,12 +42,15 @@ CONFIG_PATH = os.getenv("CONFIG_PATH", "config.json")
 STATE_DIR = os.getenv("STATE_DIR", "state")
 WEBHOOK = os.getenv("DISCORD_WEBHOOK", "")
 NEWS_WEBHOOK = os.getenv("NEWS_WEBHOOK", "") or WEBHOOK
-GAME_WEBHOOKS = {"pokemon": os.getenv("POKEMON_WEBHOOK", ""), "yugioh": os.getenv("YUGIOH_WEBHOOK", "")}
+GAME_WEBHOOKS = {"pokemon": os.getenv("POKEMON_WEBHOOK", ""), "yugioh": os.getenv("YUGIOH_WEBHOOK", ""),
+                 "funko": os.getenv("FUNKO_WEBHOOK", "")}
 ANY_GAME = GAME_WEBHOOKS["pokemon"] or GAME_WEBHOOKS["yugioh"]
 
 
 def hook(game: str, kind: str) -> str:
     """Which webhook a post goes to: the game's own channel if set, else alerts/news, else any game channel."""
+    if game == "funko":   # Funko never spills into the card channels
+        return GAME_WEBHOOKS["funko"] or (NEWS_WEBHOOK if kind == "news" else WEBHOOK)
     return GAME_WEBHOOKS.get(game, "") or (NEWS_WEBHOOK if kind == "news" else WEBHOOK) or ANY_GAME
 FORCE_ALERT = os.getenv("FORCE_ALERT", "") in ("1", "true", "yes")
 
@@ -164,7 +167,8 @@ async def main() -> int:
             ShopifyChecker(fetcher),
             PageWatchChecker(fetcher),
             SearchPageChecker(fetcher, walmart=bool(settings.get("walmart", True)),
-                              gamestop=bool(settings.get("gamestop", True))),
+                              gamestop=bool(settings.get("gamestop", True)),
+                              hottopic=bool(settings.get("hottopic", True)), fye=bool(settings.get("fye", True))),
         ]
         engine = Engine(state, checkers, os.path.join(STATE_DIR, "seen.json"),
                         realert_hours=float(settings.get("realert_hours") or 6), news=NewsChecker(fetcher))
@@ -198,8 +202,8 @@ async def main() -> int:
         digest_hour = 9 if digest_hour in (None, "") else int(digest_hour)
         if now.hour >= digest_hour and misc.get("last_digest") != today:
             if ANY_GAME:
-                for game in ("pokemon", "yugioh"):
-                    if any(d.get("game") == game for d in state.upcoming_drops(14)):
+                for game in ("pokemon", "yugioh", "funko"):
+                    if any(d.get("game") == game for d in state.upcoming_drops(14)) and hook(game, "news"):
                         await poster.send(hook(game, "news"), digest_text(state, 14, interactive=False, game=game))
             elif state.upcoming_drops(14):
                 await poster.send(NEWS_WEBHOOK, digest_text(state, 14, interactive=False))

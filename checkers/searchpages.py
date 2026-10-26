@@ -23,7 +23,18 @@ log = logging.getLogger("searchpages")
 QUERIES = {
     "pokemon": ["pokemon trading cards"],
     "yugioh": ["yu-gi-oh trading cards"],
+    "funko": ["funko pop"],
 }
+SEARCH_URLS = {
+    "walmart": "https://www.walmart.com/search?q={q}",
+    "gamestop": "https://www.gamestop.com/search/?q={q}",
+    "hottopic": "https://www.hottopic.com/search?q={q}",      # Funko only
+    "fye": "https://www.fye.com/search?q={q}",                # Funko only
+}
+FUNKO_ONLY_SITES = {"hottopic", "fye"}
+TILE_RX = re.compile(r'<(?:div|li)[^>]+class="[^"]*product(?:-tile|-grid-item|Tile)[^"]*"[^>]*>(.*?)(?=<(?:div|li)[^>]+class="[^"]*product(?:-tile|-grid-item|Tile)|$)', re.S | re.I)
+TILE_NAME_RX = re.compile(r'(?:class="[^"]*(?:pdp-link|product-name|link|name)[^"]*"[^>]*>\s*<a[^>]*>|<a[^>]+class="[^"]*(?:link|name)[^"]*"[^>]*>|title="|aria-label=")([^"<]{6,160})', re.I)
+TILE_HREF_RX = re.compile(r'href="(/(?:products?|p)/[^"]+)"', re.I)
 BLOCK_RX = re.compile(r"px-captcha|Robot or human|Access Denied|blocked|captcha", re.I)
 NEXT_DATA_RX = re.compile(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', re.S)
 GS_TILE_RX = re.compile(r'data-gtmdata="([^"]+)"', re.I)
@@ -112,13 +123,43 @@ def parse_gamestop(html: str, game: str) -> tuple[str, list[Product], set[str]]:
     return "ok", list(products.values()), in_stock
 
 
+def parse_tiles(html: str, game: str, site: str) -> tuple[str, list[Product], set[str]]:
+    """Generic parser for Salesforce-Commerce-style shops (Hot Topic, FYE): product tiles with a name,
+    a link, and 'Add to Cart' vs 'Sold Out' text. Best-effort."""
+    if BLOCK_RX.search(html[:5000]) and "product" not in html[:200000].lower():
+        return "blocked", [], set()
+    products: dict[str, Product] = {}
+    in_stock: set[str] = set()
+    base = {"hottopic": "https://www.hottopic.com", "fye": "https://www.fye.com"}.get(site, "")
+    for m in TILE_RX.finditer(html):
+        tile = m.group(1)
+        nm = TILE_NAME_RX.search(tile)
+        href = TILE_HREF_RX.search(tile)
+        name = unescape(nm.group(1)).strip() if nm else ""
+        if not name or not href or filters.match(name, {game}) is None:
+            continue
+        pid = re.sub(r"[^0-9A-Za-z]", "", href.group(1).rsplit("/", 1)[-1].split(".")[0])[:40] or name[:40]
+        price_m = re.search(r"\$\s?(\d+\.\d{2})", tile)
+        products[pid] = Product(retailer=site, id=pid, title=name, game=game, url=base + href.group(1),
+                                price=f"${price_m.group(1)}" if price_m else "")
+        low = tile.lower()
+        if ("add to cart" in low or "add to bag" in low or "in stock" in low) and not any(
+                w in low for w in ("sold out", "out of stock", "notify me", "coming soon")):
+            in_stock.add(pid)
+    if not products and not TILE_RX.search(html):
+        return "unknown", [], set()
+    return "ok", list(products.values()), in_stock
+
+
 class SearchPageChecker:
     name = "searchpages"
-    label = "Walmart + GameStop"
+    label = "Walmart / GameStop / Hot Topic / FYE"
 
-    def __init__(self, fetcher, walmart: bool = True, gamestop: bool = True, delay: float = 1.5):
+    def __init__(self, fetcher, walmart: bool = True, gamestop: bool = True, hottopic: bool = True,
+                 fye: bool = True, delay: float = 1.5):
         self.fetcher = fetcher
-        self.sites = [s for s, on in (("walmart", walmart), ("gamestop", gamestop)) if on]
+        self.sites = [s for s, on in (("walmart", walmart), ("gamestop", gamestop),
+                                      ("hottopic", hottopic), ("fye", fye)) if on]
         self.delay = delay
         self.known_products: dict[str, Product] = {}
         self.last_summary = ""
@@ -133,16 +174,21 @@ class SearchPageChecker:
         known: dict[str, Product] = {}
         for site in self.sites:
             states, found = [], 0
-            for game in games:
+            site_games = [g for g in games if g == "funko" or site not in FUNKO_ONLY_SITES]
+            if not site_games:
+                continue
+            for game in site_games:
                 for q in QUERIES[game]:
-                    if site == "walmart":
-                        url = "https://www.walmart.com/search?q=" + q.replace(" ", "+")
-                        code, html, final = await self.fetcher.get_text(url)
-                        state, prods, ok_ids = ("blocked", [], set()) if code in (0, 403, 429) else parse_walmart(html, game)
+                    url = SEARCH_URLS[site].format(q=q.replace(" ", "+" if site == "walmart" else "%20"))
+                    code, html, final = await self.fetcher.get_text(url)
+                    if code in (0, 403, 429):
+                        state, prods, ok_ids = "blocked", [], set()
+                    elif site == "walmart":
+                        state, prods, ok_ids = parse_walmart(html, game)
+                    elif site == "gamestop":
+                        state, prods, ok_ids = parse_gamestop(html, game)
                     else:
-                        url = "https://www.gamestop.com/search/?q=" + q.replace(" ", "%20")
-                        code, html, final = await self.fetcher.get_text(url)
-                        state, prods, ok_ids = ("blocked", [], set()) if code in (0, 403, 429) else parse_gamestop(html, game)
+                        state, prods, ok_ids = parse_tiles(html, game, site)
                     states.append(state)
                     for p in prods:
                         known[p.key] = p
@@ -157,7 +203,7 @@ class SearchPageChecker:
             else:
                 status[site] = f"{found} products"
         self.known_products = known
-        self.last_summary = " · ".join(f"{s}: {status[s]}" for s in self.sites) + f" · {len(hits)} in-stock online"
-        if self.sites and all(status[s] in ("blocked", "page changed?") for s in self.sites):
+        self.last_summary = " · ".join(f"{s}: {status[s]}" for s in self.sites if s in status) + f" · {len(hits)} in-stock online"
+        if status and all(status[s] in ("blocked", "page changed?") for s in status):
             raise RuntimeError(self.last_summary + " (bot protection — expected now and then)")
         return hits

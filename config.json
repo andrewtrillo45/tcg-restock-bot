@@ -6,7 +6,8 @@
       "radius": 50,
       "games": [
         "pokemon",
-        "yugioh"
+        "yugioh",
+        "funko"
       ],
       "discord_user_id": "417503670071066624",
       "online": true
@@ -23,6 +24,8 @@
     "realert_hours": 6,
     "max_target_stores": 20,
     "walmart": true,
-    "gamestop": true
+    "gamestop": true,
+    "hottopic": true,
+    "fye": true
   }
 }

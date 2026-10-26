@@ -49,6 +49,8 @@ GAME_CHANNELS = {               # channel name → (env/secret prefix, topic)
                            "Grab the TCG role to see this."),
     "yugioh": ("YUGIOH", "Yu-Gi-Oh! TCG: restocks near you, new listings, drop dates and news — posted by the bot. "
                          "Grab the TCG role to see this."),
+    "funko-pops": ("FUNKO", "Funko Pops: drops, chases and exclusives at GameStop, Hot Topic, Walmart, FYE, Target, "
+                            "Best Buy — posted by the bot. Grab the TCG role to see this."),
 }
 CHAT_CHANNEL = "tcg-chat"
 
@@ -186,9 +188,10 @@ async def run(args, api_factory=DiscordREST) -> dict:
             print(f"{'✅ created' if new_ch else '✅ updated'} #{CHAT_CHANNEL}  (members can chat)")
     print("\nNext, paste these where the bot reads them:")
     print(f"  Live bot (.env / Render):   POKEMON_CHANNEL_ID={out['POKEMON_CHANNEL_ID']}   "
-          f"YUGIOH_CHANNEL_ID={out['YUGIOH_CHANNEL_ID']}")
+          f"YUGIOH_CHANNEL_ID={out['YUGIOH_CHANNEL_ID']}   FUNKO_CHANNEL_ID={out['FUNKO_CHANNEL_ID']}")
     print(f"  GitHub mode (repo secrets): POKEMON_WEBHOOK={out['POKEMON_WEBHOOK']}")
     print(f"                              YUGIOH_WEBHOOK={out['YUGIOH_WEBHOOK']}")
+    print(f"                              FUNKO_WEBHOOK={out['FUNKO_WEBHOOK']}")
     print(f"\nGive people the @{ROLE_NAME} role to let them see the category (Server Settings → Members, "
           f"or the live bot's /tcg command lets them grab it themselves).")
     return out

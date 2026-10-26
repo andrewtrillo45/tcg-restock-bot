@@ -8,7 +8,7 @@ import re
 import time
 from urllib.parse import urlsplit
 
-ALL_GAMES = ["pokemon", "yugioh"]
+ALL_GAMES = ["pokemon", "yugioh", "funko"]
 
 
 def _slug(s: str) -> str:

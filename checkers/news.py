@@ -19,6 +19,8 @@ log = logging.getLogger("news")
 DEFAULT_FEEDS = [
     "https://www.pokebeach.com/feed",          # Pokémon TCG set reveals, release dates, product news
     "https://ygorganization.com/feed/",        # Yu-Gi-Oh! TCG product + release news
+    "https://www.poppriceguide.com/feed/",     # Funko Pop news: new releases, exclusives, chases
+    "https://www.reddit.com/r/funkopop/new/.rss",  # community: leaks, drop sightings, chase finds
 ]
 
 DEFAULT_KEYWORDS = [
@@ -26,6 +28,7 @@ DEFAULT_KEYWORDS = [
     "booster", "tin", "collection", "bundle", "drop", "coming", "announced", "revealed",
     "set list", "product", "deck", "box", "in stores", "available", "exclusive", "promo",
     "expansion", "anniversary", "special set", "mega", "premium",
+    "chase", "funko", "pop!", "hot topic", "fye", "gamestop", "walmart", "target", "sdcc", "nycc", "wave",
 ]
 
 MONTHS = "january|february|march|april|may|june|july|august|september|october|november|december"
@@ -126,8 +129,9 @@ def parse_feed(xml_text: str, source: str) -> list[NewsItem]:
     else:
         raise RuntimeError(f"{source}: feed has no items")
     for n in items:
-        n.game = filters.which_game(f"{n.title} {n.summary}") or ("yugioh" if "ygorg" in source else
-                                                                   "pokemon" if "pokebeach" in source else "other")
+        n.game = filters.which_game(f"{n.title} {n.summary}") or (
+            "yugioh" if "ygorg" in source else "pokemon" if "pokebeach" in source
+            else "funko" if ("poppriceguide" in source or "funkopop" in source) else "other")
         n.release_date = extract_date(n.title) or extract_date(n.summary[:300])
     return items
 

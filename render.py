@@ -11,8 +11,8 @@ from checkers.news import NewsItem
 from models import Alert, Product
 
 TZ = os.getenv("TZ_NAME", "America/Denver")
-COLORS = {"target": 0xCC0000, "bestbuy": 0x0046BE, "walmart": 0x0071CE, "gamestop": 0xE4002B, "shop": 0x2E8B57, "url": 0x7289DA, "news": 0xF1C40F}
-RETAILER_LABEL = {"target": "Target", "bestbuy": "Best Buy", "walmart": "Walmart", "gamestop": "GameStop", "shop": "Local shop", "url": "Online",
+COLORS = {"target": 0xCC0000, "bestbuy": 0x0046BE, "walmart": 0x0071CE, "gamestop": 0xE4002B, "hottopic": 0xD4145A, "fye": 0xF68B1F, "shop": 0x2E8B57, "url": 0x7289DA, "news": 0xF1C40F}
+RETAILER_LABEL = {"target": "Target", "bestbuy": "Best Buy", "walmart": "Walmart", "gamestop": "GameStop", "hottopic": "Hot Topic", "fye": "FYE", "shop": "Local shop", "url": "Online",
                   "manual": "added by hand", "news": "news"}
 SKU_WORD = {"target": "TCIN", "bestbuy": "SKU"}
 
@@ -45,6 +45,13 @@ def nice_date(iso: str) -> str:
 
 def _spec(game: str) -> dict:
     return filters.GAMES.get(game, {"label": "Trading cards", "emoji": "🃏"})
+
+
+def _tagged(title: str, game: str) -> str:
+    if game != "funko":
+        return title
+    tags = filters.funko_tags(title)
+    return (" ".join(f"[{t}]" for t in tags) + " " + title) if tags else title
 
 
 def _embed(title: str, url: str = "", color: int = 0x999999, description: str = "",
@@ -87,7 +94,9 @@ def alert_message(a: Alert) -> tuple[str, dict]:
         header = f"🌐 {spec['emoji']} **{spec['label']}** — {retailer} restock {site}"
         mentions = ", ".join(f"<@{uid}>" for uid, _ in a.recipients[:30])
     desc.append("Go now — stock moves fast. Double-check in the app before you drive.")
-    embed = _embed(prod.title, prod.url, COLORS.get(prod.retailer, 0x999999), "\n".join(desc),
+    if prod.game == "funko" and "CHASE" in filters.funko_tags(prod.title):
+        header = "🔥 **CHASE** " + header
+    embed = _embed(_tagged(prod.title, prod.game), prod.url, COLORS.get(prod.retailer, 0x999999), "\n".join(desc),
                    prod.image, f"{retailer} · {datetime.now(_tz()).strftime('%b %d %I:%M %p')}")
     if fields:
         embed["fields"] = fields
@@ -104,7 +113,7 @@ def listing_message(prod: Product) -> tuple[str, dict]:
         desc += f" · 💲 {prod.price}"
     if prod.release_date:
         desc += f"\n📅 Street date: **{nice_date(prod.release_date)}**"
-    embed = _embed(prod.title, prod.url, COLORS.get(prod.retailer, 0x999999), desc, prod.image,
+    embed = _embed(_tagged(prod.title, prod.game), prod.url, COLORS.get(prod.retailer, 0x999999), desc, prod.image,
                    f"{retailer} · new listing spotted · stock checks start now")
     return f"👀 {spec['emoji']} **New {spec['label']} listing at {retailer}**", embed
 
@@ -115,7 +124,7 @@ def drop_message(d: dict) -> tuple[str, dict]:
     desc = f"📅 **{nice_date(d['date'])}**"
     if d.get("sku"):
         desc += f" · {SKU_WORD.get(d.get('retailer', ''), 'ID')} `{d['sku']}`"
-    embed = _embed(d["name"], d.get("url", ""), COLORS["news"], desc,
+    embed = _embed(_tagged(d["name"], d.get("game", "")), d.get("url", ""), COLORS["news"], desc,
                    footer=f"release date from {src} · /drops for the full list")
     return f"🗓️ {spec['emoji']} **{spec['label']} drop date confirmed**", embed
 
@@ -126,7 +135,7 @@ def news_message(n: NewsItem, interactive: bool = True) -> tuple[str, dict]:
     if n.release_date:
         how = "pin it with `/adddrop`" if interactive else "add it to config.json → drops"
         desc = f"📅 Mentions **{nice_date(n.release_date)}** — if that's a drop, {how}\n{desc}"
-    embed = _embed(n.title, n.link, COLORS["news"], desc,
+    embed = _embed(_tagged(n.title, n.game), n.link, COLORS["news"], desc,
                    footer=f"{n.source} · {datetime.fromtimestamp(n.published).strftime('%b %d')}")
     return f"📰 {spec['emoji']} **{spec['label']} news**", embed
 
