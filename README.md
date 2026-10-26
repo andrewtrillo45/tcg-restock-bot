@@ -32,6 +32,7 @@ No bot anywhere can see Walmart's or GameStop's shelf counts — if someone says
 - `/status` — is every retailer check working? (✅ / ❌)
 - `/list` — shops and pages being watched
 - `/untrack` — stop
+- `/tcg` — give yourself the TCG role (or remove it) to see #tcg-news
 
 **Admins** (Manage Server permission)
 - `/addshop name:"Bobs Cards" url:bobscards.com/collections/pokemon zip:80202` — watch a local shop; the ZIP makes it count as local
@@ -39,8 +40,21 @@ No bot anywhere can see Walmart's or GameStop's shelf counts — if someone says
 - `/addsku retailer:Target number:94300123` — pin a TCIN/SKU so it's always checked, even before the search finds it
 - `/adddrop name:"Phantasmal Flames ETB" date:2026-11-14 games:Pokémon` — put a release on the calendar
 - `/addfeed url:<rss>` — add a news feed
+- `/setup` — create the TCG role + private #tcg-news channel (see above)
 - `/scan` — run a scan now (`post_everything:true` posts all current stock)
 - `/removeshop`, `/unwatchurl`, `/removesku`, `/removedrop`, `/removefeed`
+
+---
+
+## The #tcg-news channel and the TCG role
+
+The bot can set up its own home in your server: a **TCG** role and a **#tcg-news** channel that only that role (and admins) can see. Everything the bot posts lands there.
+
+- **Live bot:** type `/setup` once (needs the bot to have Manage Roles, Manage Channels, Manage Webhooks). Options: `chat:true` lets TCG members talk in it, `alerts_channel:true` also makes a separate #tcg-alerts, `category:"TCG"` files it under a category. Members then grab or drop the role with `/tcg`.
+- **GitHub mode (or before deploying):** `python setup_discord.py` does the same from your PC and prints the channel IDs and the webhook URLs to paste into the repo secrets (`NEWS_WEBHOOK` / `DISCORD_WEBHOOK`). It needs a bot token + server ID in `.env` and the bot invited with those three permissions. Flags: `--alerts-channel`, `--chat`, `--category "TCG"`.
+- **By hand (2 minutes):** Server Settings → Roles → Create Role "TCG" (mentionable). Create text channel "tcg-news" → Edit Channel → Permissions → turn on **Private Channel**, add the TCG role → under the TCG role, turn **Send Messages** off (read-only) and leave View Channel / Read Message History on. Then Integrations → Webhooks → New Webhook → copy the URL.
+
+Both commands and the script are safe to run again — they reuse what exists and re-apply the permissions.
 
 ---
 
@@ -114,7 +128,7 @@ GitHub mode reads `config.json` plus these secrets: `DISCORD_WEBHOOK` (required)
 | Variable | Required | What it does |
 |---|---|---|
 | `DISCORD_TOKEN` | yes | bot token |
-| `ALERT_CHANNEL_ID` | yes | where stock alerts go |
+| `ALERT_CHANNEL_ID` | yes* | where stock alerts go (*or run `/setup` and the bot picks its own channel) |
 | `NEWS_CHANNEL_ID` | no | where drop news / new listings / digest go (default: alert channel) |
 | `CONFIG_CHANNEL_ID` | on Render | private channel for backups |
 | `GUILD_ID` | no | your server ID → slash commands appear instantly instead of ~1 hour |
@@ -146,4 +160,4 @@ GitHub mode reads `config.json` plus these secrets: `DISCORD_WEBHOOK` (required)
 ## How it works (short version)
 Every scan: look up Target stores within each tracker's radius → search Target/Best Buy for Pokémon & Yu-Gi-Oh! product (titles filtered so plush, binders and sleeves don't count) → check every store for every product → compare with the last scan → post only what newly flipped to in stock, @-mentioning each person whose circle contains that store, with the distance. New product pages and street dates feed the drop calendar; RSS feeds feed the news channel; a digest posts each morning when something is coming up.
 
-Files: `scan_once.py` (GitHub mode entry point) · `bot.py` (live bot) · `engine.py` (what's new / who to ping) · `checkers/` (one file per source) · `render.py` (the Discord messages) · `state.py` (settings) · `selftest.py` (command-line test) · `.github/workflows/scan.yml` (the schedule).
+Files: `setup_discord.py` (one-time channel/role setup) · `scan_once.py` (GitHub mode entry point) · `bot.py` (live bot) · `engine.py` (what's new / who to ping) · `checkers/` (one file per source) · `render.py` (the Discord messages) · `state.py` (settings) · `selftest.py` (command-line test) · `.github/workflows/scan.yml` (the schedule).

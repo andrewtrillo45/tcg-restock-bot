@@ -152,15 +152,15 @@ class RestockBot(discord.Client):
     async def post_listing(self, prod: Product) -> None:
         """A retailer created a product page — usually days/weeks before launch."""
         content, embed = listing_message(prod)
-        await self._post(NEWS_CHANNEL_ID or ALERT_CHANNEL_ID, content, embed)
+        await self._post(self.news_channel_id(), content, embed)
 
     async def post_drop(self, d: dict) -> None:
         content, embed = drop_message(d)
-        await self._post(NEWS_CHANNEL_ID or ALERT_CHANNEL_ID, content, embed)
+        await self._post(self.news_channel_id(), content, embed)
 
     async def post_news(self, n: NewsItem) -> None:
         content, embed = news_message(n, interactive=True)
-        await self._post(NEWS_CHANNEL_ID or ALERT_CHANNEL_ID, content, embed)
+        await self._post(self.news_channel_id(), content, embed)
 
     # ---------- daily drops digest ----------
     async def _digest_forever(self) -> None:
@@ -181,14 +181,14 @@ class RestockBot(discord.Client):
         return digest_text(self.state, days, interactive=True)
 
     async def post_digest(self) -> None:
-        ch = await self.channel(NEWS_CHANNEL_ID or ALERT_CHANNEL_ID)
+        ch = await self.channel(self.news_channel_id())
         if ch and (self.state.upcoming_drops(14)):
             await ch.send(self.digest_text(14))
 
     async def post_alert(self, a: Alert) -> None:
         content, embed_dict = alert_message(a)
         embed = discord.Embed.from_dict(embed_dict)
-        channel = await self.channel(ALERT_CHANNEL_ID)
+        channel = await self.channel(self.alert_channel_id())
         if channel is not None:
             await channel.send(content=content, embed=embed,
                                allowed_mentions=discord.AllowedMentions(users=True))
@@ -203,6 +203,12 @@ class RestockBot(discord.Client):
                 await user.send(content=plain, embed=embed)
             except Exception as e:
                 log.info("DM to %s failed: %s", uid, e)
+
+    def news_channel_id(self) -> int:
+        return int(self.state.settings.get("news_channel_id") or NEWS_CHANNEL_ID or self.alert_channel_id())
+
+    def alert_channel_id(self) -> int:
+        return int(self.state.settings.get("alert_channel_id") or ALERT_CHANNEL_ID)
 
     async def channel(self, cid: int):
         if not cid:
@@ -309,7 +315,7 @@ def register_commands(bot: RestockBot) -> None:
         await inter.followup.send(
             f"✅ Tracking **{games_label(glist)}** within **{radius} mi** of "
             f"**{info['city']}, {info['state']} {info['zip']}**.\n"
-            f"Alerts post in <#{ALERT_CHANNEL_ID}>{' and your DMs' if dm else ''}. "
+            f"Alerts post in <#{bot.alert_channel_id()}>{' and your DMs' if dm else ''}. "
             f"Use `/stock` any time to see what's in stock right now.", ephemeral=True)
 
     @tree.command(name="untrack", description="Stop my stock alerts")
@@ -525,6 +531,93 @@ def register_commands(bot: RestockBot) -> None:
                                           "(the two built-in feeds can't be removed; they're filtered by keyword).",
                                           ephemeral=True)
 
+    # ----- server setup -----
+    @tree.command(name="setup", description="Create the TCG role and a private #tcg-news channel for this bot (admin)")
+    @app_commands.describe(chat="Let TCG members talk in the channel (default: read-only)",
+                           alerts_channel="Also make #tcg-alerts and send stock alerts there",
+                           category="Put the channel(s) under this category name")
+    @app_commands.default_permissions(manage_guild=True)
+    async def setup(inter: discord.Interaction, chat: bool = False, alerts_channel: bool = False,
+                    category: str | None = None):
+        await inter.response.defer(ephemeral=True)
+        guild = inter.guild
+        if guild is None:
+            return await inter.followup.send("Run this inside your server.", ephemeral=True)
+        me = guild.me
+        try:
+            role = discord.utils.get(guild.roles, name="TCG")
+            made_role = False
+            if role is None:
+                role = await guild.create_role(name="TCG", colour=discord.Colour(0xF1C40F), mentionable=True,
+                                               permissions=discord.Permissions.none(), reason="TCG bot setup")
+                made_role = True
+            member_perms = discord.PermissionOverwrite(view_channel=True, read_message_history=True,
+                                                       add_reactions=True, use_external_emojis=True,
+                                                       send_messages=chat, create_public_threads=False,
+                                                       send_messages_in_threads=False)
+            ow = {
+                guild.default_role: discord.PermissionOverwrite(view_channel=False),
+                role: member_perms,
+                me: discord.PermissionOverwrite(view_channel=True, send_messages=True, embed_links=True,
+                                                attach_files=True, read_message_history=True,
+                                                mention_everyone=True, manage_webhooks=True),
+            }
+            parent = None
+            if category:
+                parent = discord.utils.get(guild.categories, name=category)
+                if parent is None:
+                    parent = await guild.create_category(category, overwrites=ow, reason="TCG bot setup")
+            topic = ("Pokémon & Yu-Gi-Oh! restocks near you, new listings, drop dates and news — posted by the TCG bot. "
+                     "Only the TCG role can see this channel.")
+            async def ensure(name: str):
+                ch = discord.utils.get(guild.text_channels, name=name)
+                if ch is None:
+                    ch = await guild.create_text_channel(name, overwrites=ow, topic=topic, category=parent,
+                                                         reason="TCG bot setup")
+                    return ch, True
+                await ch.edit(overwrites=ow, topic=topic, category=parent or ch.category)
+                return ch, False
+            news, new_news = await ensure("tcg-news")
+            bot.state.settings["news_channel_id"] = news.id
+            lines = [f"{'✅ created' if made_role else '✅ found'} role {role.mention}",
+                     f"{'✅ created' if new_news else '✅ updated'} {news.mention} — hidden from everyone else, "
+                     f"{'TCG members can chat' if chat else 'read-only for TCG members'}"]
+            if alerts_channel:
+                alerts, new_alerts = await ensure("tcg-alerts")
+                bot.state.settings["alert_channel_id"] = alerts.id
+                lines.append(f"{'✅ created' if new_alerts else '✅ updated'} {alerts.mention} — stock alerts go here now")
+            else:
+                bot.state.settings["alert_channel_id"] = news.id
+                lines.append(f"Stock alerts, drop news and the morning digest all post in {news.mention}")
+            bot.state.save()
+            await bot.backup_state()
+            lines.append("Members can grab or drop the role with `/tcg`. "
+                         "Admins see the channel regardless.")
+            await inter.followup.send("\n".join(lines), ephemeral=True)
+        except discord.Forbidden:
+            await inter.followup.send("❌ I'm missing permissions. Give the bot **Manage Roles**, **Manage Channels** "
+                                      "and **Manage Webhooks** (Server Settings → Roles → the bot's role), then run "
+                                      "`/setup` again.", ephemeral=True)
+
+    @tree.command(name="tcg", description="Give yourself the TCG role (or remove it) to see #tcg-news")
+    async def tcg(inter: discord.Interaction):
+        guild = inter.guild
+        role = discord.utils.get(guild.roles, name="TCG") if guild else None
+        if role is None:
+            return await inter.response.send_message("There's no TCG role yet — an admin needs to run `/setup`.",
+                                                     ephemeral=True)
+        member = inter.user
+        try:
+            if role in member.roles:
+                await member.remove_roles(role, reason="/tcg toggle")
+                msg = "Removed the TCG role — you won't see #tcg-news anymore."
+            else:
+                await member.add_roles(role, reason="/tcg toggle")
+                msg = f"You've got the {role.mention} role — <#{bot.news_channel_id()}> is open to you now."
+        except discord.Forbidden:
+            msg = "❌ I can't change roles. The bot needs **Manage Roles** and its role must sit above TCG in the role list."
+        await inter.response.send_message(msg, ephemeral=True)
+
     @tree.command(name="scan", description="Run a scan right now (admin)")
     @app_commands.describe(post_everything="Post everything currently in stock, not just new changes")
     @app_commands.default_permissions(manage_guild=True)
@@ -542,7 +635,8 @@ def main() -> None:
     if not DISCORD_TOKEN:
         raise SystemExit("DISCORD_TOKEN is not set. Copy .env.example to .env and fill it in.")
     if not ALERT_CHANNEL_ID:
-        raise SystemExit("ALERT_CHANNEL_ID is not set (right-click the channel → Copy ID).")
+        log.warning("ALERT_CHANNEL_ID is not set — run /setup in your server and the bot will create "
+                    "#tcg-news (and the TCG role) and post there.")
     os.makedirs(DATA_DIR, exist_ok=True)
     RestockBot().run(DISCORD_TOKEN, log_handler=None)
 

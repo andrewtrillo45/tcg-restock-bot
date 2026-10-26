@@ -24,13 +24,15 @@ class State:
         self.skus: list[dict] = []      # pinned products: {"retailer","id","name","added"}
         self.drops: list[dict] = []     # upcoming releases: {"key","name","game","date","source","url","retailer","sku"}
         self.feeds: list[str] = []      # extra RSS feeds (defaults are added in code)
+        self.settings: dict = {}        # e.g. news_channel_id / alert_channel_id set by /setup
         self.updated_at: float = 0
 
     # ---------- persistence ----------
     def to_json(self) -> str:
         return json.dumps({"version": 1, "updated_at": self.updated_at,
                            "trackers": self.trackers, "shops": self.shops, "urls": self.urls,
-                           "skus": self.skus, "drops": self.drops, "feeds": self.feeds},
+                           "skus": self.skus, "drops": self.drops, "feeds": self.feeds,
+                           "settings": self.settings},
                           indent=2, ensure_ascii=False)
 
     def load_json(self, text: str) -> None:
@@ -41,6 +43,7 @@ class State:
         self.skus = d.get("skus") or []
         self.drops = d.get("drops") or []
         self.feeds = d.get("feeds") or []
+        self.settings = d.get("settings") or {}
         self.updated_at = float(d.get("updated_at") or 0)
 
     def load_file(self) -> bool:
