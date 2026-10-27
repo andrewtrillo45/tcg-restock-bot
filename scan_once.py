@@ -32,7 +32,7 @@ from checkers import (BestBuyChecker, NewsChecker, PageWatchChecker, SearchPageC
 from engine import Engine
 from geo import lookup_zip, valid_zip
 from http_client import AiohttpFetcher
-from render import alert_message, digest_text, drop_message, listing_message, news_message
+from render import alert_message, digest_text, drop_message, health_changes, listing_message, news_message
 from state import ALL_GAMES, State
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(levelname)s %(name)s: %(message)s")
@@ -45,6 +45,7 @@ NEWS_WEBHOOK = os.getenv("NEWS_WEBHOOK", "") or WEBHOOK
 GAME_WEBHOOKS = {"pokemon": os.getenv("POKEMON_WEBHOOK", ""), "yugioh": os.getenv("YUGIOH_WEBHOOK", ""),
                  "funko": os.getenv("FUNKO_WEBHOOK", "")}
 ANY_GAME = GAME_WEBHOOKS["pokemon"] or GAME_WEBHOOKS["yugioh"]
+STATUS_WEBHOOK = os.getenv("STATUS_WEBHOOK", "") or NEWS_WEBHOOK or GAME_WEBHOOKS["pokemon"] or ANY_GAME
 
 
 def hook(game: str, kind: str) -> str:
@@ -208,6 +209,14 @@ async def main() -> int:
             elif state.upcoming_drops(14):
                 await poster.send(NEWS_WEBHOOK, digest_text(state, 14, interactive=False))
             misc["last_digest"] = today
+        # tell Discord when a source breaks or recovers (once per change, not every run)
+        prev_health = dict(misc.get("health") or {})
+        prev_health["searchpages_detail"] = misc.get("searchpages_detail", "")
+        now_health = {k: v[0] for k, v in engine.health.items()}
+        for content, embed in health_changes(prev_health, engine.health):
+            await poster.send(STATUS_WEBHOOK, content, embed)
+        misc["health"] = now_health
+        misc["searchpages_detail"] = engine.health.get("searchpages", ("", ""))[1]
         misc["last_run"] = time.time()
         with open(misc_path, "w", encoding="utf-8") as f:
             json.dump(misc, f)

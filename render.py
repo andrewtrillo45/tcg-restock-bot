@@ -180,3 +180,46 @@ def status_lines(engine, state, interval_min: float, ago_fn) -> list[str]:
                  f"Watched pages: {len(state.urls)} · Pinned SKUs: {len(state.skus)} · "
                  f"Upcoming drops: {len(state.upcoming_drops(365))}")
     return lines
+
+
+SOURCE_LABELS = {"target": "Target", "bestbuy": "Best Buy", "shops": "Local card shops", "urls": "Watched pages",
+                 "searchpages": "Walmart / GameStop / Hot Topic / FYE", "news": "News feeds"}
+
+
+def health_changes(prev: dict, now: dict) -> list[tuple[str, dict]]:
+    """Compare last run's health to this run's. Returns (content, embed) posts for sources that
+    flipped between working and broken — never for sources that stayed the same."""
+    posts = []
+    for src, (state, detail) in now.items():
+        was = prev.get(src)
+        label = SOURCE_LABELS.get(src, src)
+        if state == "error" and was != "error":
+            blocked = "block" in detail.lower() or "403" in detail or "429" in detail
+            what = "is blocking the bot right now" if blocked else "failed"
+            tip = ("Normal for this site — it retries every scan and I'll post when it's back. "
+                   "No alerts from it until then." if blocked else
+                   "If this keeps up, check the GitHub Actions log or ask Claude to look.")
+            posts.append((f"🔴 **{label}** {what}", _embed("Source down", "", 0xE74C3C, f"`{detail[:300]}`\n{tip}")))
+        elif state == "ok" and was == "error":
+            posts.append((f"🟢 **{label}** is back — alerts from it have resumed",
+                          _embed("Source restored", "", 0x2ECC71, detail[:300])))
+    # sub-sources inside the search-page checker (walmart: blocked · gamestop: 12 products …)
+    def parts(detail: str) -> dict:
+        out = {}
+        for piece in (detail or "").split("·"):
+            if ":" in piece:
+                k, v = piece.split(":", 1)
+                out[k.strip()] = v.strip()
+        return out
+    pn, nn = parts(prev.get("searchpages_detail", "")), parts(now.get("searchpages", ("", ""))[1] if "searchpages" in now else "")
+    for site, val in nn.items():
+        if site not in RETAILER_LABEL:
+            continue
+        bad_now = val.startswith("blocked") or val.startswith("page changed")
+        bad_before = (pn.get(site, "") or "").startswith(("blocked", "page changed"))
+        if bad_now and not bad_before and now.get("searchpages", ("",))[0] == "ok":
+            posts.append((f"🔴 **{RETAILER_LABEL[site]}** is blocking the bot right now ({val})",
+                          _embed("Source down", "", 0xE74C3C, "Others still work. Retries every scan; I'll post when it's back.")))
+        elif bad_before and not bad_now and pn:
+            posts.append((f"🟢 **{RETAILER_LABEL[site]}** is back ({val})", _embed("Source restored", "", 0x2ECC71, "")))
+    return posts
