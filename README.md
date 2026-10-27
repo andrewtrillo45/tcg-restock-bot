@@ -143,6 +143,16 @@ GitHub mode reads `config.json` plus these secrets: `POKEMON_WEBHOOK` + `YUGIOH_
 
 ---
 
+## Helping the bot with Walmart
+
+Walmart blocks most server IPs (that's why GitHub runs often show Walmart 🔴). A home internet connection gets through far more often, so you can run **just the Walmart check** from your PC while GitHub does everything else:
+
+1. On your PC, in the bot folder: install Python 3.11+ (tick "Add to PATH"), make sure `.env` has your webhooks, then double-click `walmart-helper.bat` once to test — it prints the scan summary.
+2. Double-click `install-walmart-helper.bat` — Windows will run the Walmart check every 10 minutes while you're logged in (hidden; log in `state-walmart\walmart-helper.log`).
+3. On GitHub: Settings → Secrets and variables → Actions → **Variables** → New variable `WALMART_ON_PC` = `true`, so the GitHub runs stop hitting Walmart.
+
+Still online stock only. Other options: apply for Walmart's free affiliate API at walmart.io (clean online data, approval takes a while), a residential proxy service (what BrickSeek uses, paid), or Walmart's own "Get in-stock alert" button on an item page.
+
 ## Troubleshooting
 
 - **GitHub run is red ✗** — open the run → "Scan stores" step. A `config.json` error says exactly which line; "every source failed" usually means the secrets weren't saved.

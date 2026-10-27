@@ -54,6 +54,8 @@ def hook(game: str, kind: str) -> str:
         return GAME_WEBHOOKS["funko"] or (NEWS_WEBHOOK if kind == "news" else WEBHOOK)
     return GAME_WEBHOOKS.get(game, "") or (NEWS_WEBHOOK if kind == "news" else WEBHOOK) or ANY_GAME
 FORCE_ALERT = os.getenv("FORCE_ALERT", "") in ("1", "true", "yes")
+# SOURCES=walmart  → run only that check (the "helper" mode for a home PC); empty = everything
+SOURCES = {x.strip().lower() for x in os.getenv("SOURCES", "").split(",") if x.strip()}
 
 
 class ConfigError(SystemExit):
@@ -161,18 +163,33 @@ async def main() -> int:
     await fetcher.start()
     try:
         state = await build_state(cfg, fetcher)
-        checkers = [
-            TargetChecker(fetcher, key=os.getenv("TARGET_KEY") or None,
-                          max_stores=int(settings.get("max_target_stores") or 20)),
-            BestBuyChecker(fetcher, os.getenv("BESTBUY_API_KEY", "")),
-            ShopifyChecker(fetcher),
-            PageWatchChecker(fetcher),
-            SearchPageChecker(fetcher, walmart=bool(settings.get("walmart", True)),
-                              gamestop=bool(settings.get("gamestop", True)),
-                              hottopic=bool(settings.get("hottopic", True)), fye=bool(settings.get("fye", True))),
-        ]
+        def want(name: str) -> bool:
+            return not SOURCES or name in SOURCES
+        sp_sites = {"walmart", "gamestop", "hottopic", "fye"}
+        if os.getenv("WALMART_ON_PC", "").lower() in ("1", "true", "yes") and not SOURCES:
+            settings["walmart"] = False   # a home PC is doing Walmart; don't double-post from GitHub
+        checkers = []
+        if want("target"):
+            checkers.append(TargetChecker(fetcher, key=os.getenv("TARGET_KEY") or None,
+                                          max_stores=int(settings.get("max_target_stores") or 20)))
+        if want("bestbuy"):
+            checkers.append(BestBuyChecker(fetcher, os.getenv("BESTBUY_API_KEY", "")))
+        if want("shops"):
+            checkers.append(ShopifyChecker(fetcher))
+        if want("urls"):
+            checkers.append(PageWatchChecker(fetcher))
+        if not SOURCES or SOURCES & sp_sites:
+            checkers.append(SearchPageChecker(
+                fetcher,
+                walmart=bool(settings.get("walmart", True)) and want("walmart"),
+                gamestop=bool(settings.get("gamestop", True)) and want("gamestop"),
+                hottopic=bool(settings.get("hottopic", True)) and want("hottopic"),
+                fye=bool(settings.get("fye", True)) and want("fye")))
+        if not checkers:
+            raise ConfigError(f"SOURCES={sorted(SOURCES)} matched nothing (use target, bestbuy, shops, urls, walmart, gamestop, hottopic, fye)")
         engine = Engine(state, checkers, os.path.join(STATE_DIR, "seen.json"),
-                        realert_hours=float(settings.get("realert_hours") or 6), news=NewsChecker(fetcher))
+                        realert_hours=float(settings.get("realert_hours") or 6),
+                        news=NewsChecker(fetcher) if want("news") else None)
         first_run = not engine.baselined
         alerts = await engine.scan(force_alert=FORCE_ALERT)
         news = await engine.scan_news()
@@ -201,7 +218,7 @@ async def main() -> int:
         today = now.date().isoformat()
         digest_hour = settings.get("digest_hour")
         digest_hour = 9 if digest_hour in (None, "") else int(digest_hour)
-        if now.hour >= digest_hour and misc.get("last_digest") != today:
+        if want("news") and now.hour >= digest_hour and misc.get("last_digest") != today:
             if ANY_GAME:
                 for game in ("pokemon", "yugioh", "funko"):
                     if any(d.get("game") == game for d in state.upcoming_drops(14)) and hook(game, "news"):
@@ -223,7 +240,7 @@ async def main() -> int:
 
         # summary for the Actions log
         print("\n=== scan summary ===")
-        for ch in checkers + [engine.news]:
+        for ch in checkers + ([engine.news] if engine.news else []):
             st_, detail = engine.health.get(ch.name, ("idle", ""))
             print(("OK  " if st_ == "ok" else "FAIL") + f" {ch.label}: {detail}")
         print(f"in stock now: {len(engine.last_hits)} · alerts: {len(alerts)} · new listings: {len(engine.new_listings)}"

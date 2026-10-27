@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 .env
 SECRETS-FOR-GITHUB.txt
+state-walmart/
+.venv/

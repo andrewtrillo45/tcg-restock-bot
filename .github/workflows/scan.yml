@@ -45,6 +45,9 @@ jobs:
           BESTBUY_API_KEY: ${{ secrets.BESTBUY_API_KEY }}
           TARGET_KEY: ${{ secrets.TARGET_KEY }}
           FORCE_ALERT: ${{ github.event.inputs.post_everything == 'true' && '1' || '' }}
+          # Repo "Variables" (not secrets): set WALMART_ON_PC=true once walmart-helper runs on your PC,
+          # so GitHub stops hammering Walmart from server IPs.
+          WALMART_ON_PC: ${{ vars.WALMART_ON_PC }}
         run: python scan_once.py
 
       - name: Remember what was alerted
