@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TCG Stock Now</title>
+<meta name="description" content="What's in stock right now near you — Pokémon, Yu-Gi-Oh!, Funko Pops — updated every scan by the TCG Restock Bot.">
+<style>
+  :root { --bg:#0f1115; --card:#181b22; --line:#2a2f3a; --text:#e8eaf0; --muted:#9aa3b2; --ok:#2ecc71; --bad:#e74c3c;
+          --poke:#f1c40f; --ygo:#9b59b6; --funko:#e4002b; --link:#8ab4f8; }
+  * { box-sizing:border-box }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  header { padding:16px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--bg); z-index:2 }
+  h1 { margin:0 0 4px; font-size:20px } .sub { color:var(--muted); font-size:13px }
+  .tabs { display:flex; gap:8px; padding:12px 16px 0; overflow-x:auto }
+  .tab { border:1px solid var(--line); background:var(--card); color:var(--text); padding:8px 14px; border-radius:999px; cursor:pointer; white-space:nowrap; font-weight:600 }
+  .tab.active { border-color:var(--text) }
+  main { padding:12px 16px 40px; max-width:900px; margin:0 auto }
+  h2 { font-size:15px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin:20px 0 8px }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px 14px; margin-bottom:10px; display:flex; gap:12px; align-items:flex-start }
+  .card img { width:56px; height:56px; object-fit:contain; border-radius:8px; background:#fff; flex:none }
+  .card .t { font-weight:600 } .card a { color:var(--link); text-decoration:none } .card a:hover { text-decoration:underline }
+  .meta { color:var(--muted); font-size:13px; margin-top:3px }
+  .badge { display:inline-block; font-size:11px; font-weight:700; padding:2px 7px; border-radius:6px; margin-right:6px; vertical-align:middle }
+  .b-poke{background:var(--poke);color:#000} .b-ygo{background:var(--ygo);color:#fff} .b-funko{background:var(--funko);color:#fff}
+  .b-chase{background:#ff6b00;color:#fff} .b-tag{background:#2a2f3a;color:var(--text)}
+  .near { color:var(--ok); font-weight:700 } .online { color:var(--link) }
+  .health { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:8px }
+  .health .card { display:block; padding:10px 12px } .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:8px }
+  .ok{background:var(--ok)} .bad{background:var(--bad)}
+  .empty { color:var(--muted); padding:24px; text-align:center; border:1px dashed var(--line); border-radius:12px }
+  .tip { color:var(--muted); font-size:13px; margin-top:16px }
+</style>
+</head>
+<body>
+<header>
+  <h1>🃏 TCG Stock Now</h1>
+  <div class="sub" id="sub">Loading…</div>
+</header>
+<div class="tabs" id="tabs"></div>
+<main id="main"></main>
+<script>
+(async () => {
+  const $ = (s) => document.querySelector(s);
+  let data;
+  try { data = await (await fetch('data.json?t=' + Date.now())).json(); }
+  catch (e) { $('#main').innerHTML = '<div class="empty">No data yet — the first scan hasn\'t run.</div>'; return; }
+  const games = Object.keys(data.games || {});
+  const badge = { pokemon: 'b-poke', yugioh: 'b-ygo', funko: 'b-funko' };
+  const ago = (ts) => { const m = Math.round((Date.now()/1000 - ts)/60); return m < 2 ? 'just now' : m < 90 ? m + ' min ago' : Math.round(m/60) + ' h ago'; };
+  $('#sub').textContent = `Within ${data.home || '—'} · updated ${ago(data.updated_at)} · scans every 10 min`;
+  const esc = (s) => String(s || '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const niceDate = (iso) => { const d = new Date(iso + 'T12:00:00'); const days = Math.round((d - new Date().setHours(12,0,0,0))/86400000);
+    return d.toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'}) + (days===0?' (today!)':days===1?' (tomorrow)':days>1?` (in ${days} days)`:''); };
+  let active = games[0];
+  try { active = localStorage.getItem('tcg-tab') || active; } catch (e) {}
+  const tabs = $('#tabs');
+  const allTabs = [...games, 'health'];
+  function renderTabs() {
+    tabs.innerHTML = allTabs.map(g => `<button class="tab ${g===active?'active':''}" data-g="${g}">${g==='health'?'⚙️ Sources':(g==='pokemon'?'🟡 ':g==='yugioh'?'🟣 ':'📦 ') + esc(data.games[g])}</button>`).join('');
+    tabs.querySelectorAll('.tab').forEach(b => b.onclick = () => { active = b.dataset.g; try { localStorage.setItem('tcg-tab', active); } catch (e) {} renderTabs(); render(); });
+  }
+  function item(r) {
+    const where = r.store ? `<span class="near">🏬 ${esc(r.store)}${r.miles!=null?` · ${r.miles} mi`:''}</span>${r.qty!=null?` · ${r.qty} left`:''} · ${esc(r.note)}`
+                          : `<span class="online">🌐 ${esc(r.note)}</span>`;
+    const tags = (r.tags||[]).map(t => `<span class="badge ${t==='CHASE'?'b-chase':'b-tag'}">${esc(t)}</span>`).join('');
+    return `<div class="card">${r.image?`<img src="${esc(r.image)}" alt="">`:''}<div><div class="t">${tags}<a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title)}</a></div>
+      <div class="meta">${esc(r.retailer)}${r.price?` · ${esc(r.price)}`:''}</div><div class="meta">${where}</div></div></div>`;
+  }
+  function render() {
+    const m = $('#main');
+    if (active === 'health') {
+      m.innerHTML = '<h2>Store checks</h2><div class="health">' + data.health.map(h => `<div class="card"><span class="dot ${h.ok?'ok':'bad'}"></span><b>${esc(h.name)}</b><div class="meta">${esc(h.detail)}</div></div>`).join('') +
+        '</div><p class="tip">🔴 usually means that store\'s website is blocking the bot right now — normal for Walmart/GameStop. It retries every scan.</p>';
+      return;
+    }
+    const items = data.items.filter(i => i.game === active);
+    const local = items.filter(i => i.store), online = items.filter(i => !i.store);
+    const drops = (data.drops||[]).filter(d => d.game === active);
+    m.innerHTML =
+      `<h2>In stock near you (${local.length})</h2>` + (local.length ? local.map(item).join('') : '<div class="empty">Nothing on local shelves right now. You\'ll get a Discord ping the moment that changes.</div>') +
+      `<h2>In stock online (${online.length})</h2>` + (online.length ? online.map(item).join('') : '<div class="empty">Nothing online right now.</div>') +
+      `<h2>Coming up (${drops.length})</h2>` + (drops.length ? drops.map(d => `<div class="card"><div><div class="t">${d.url?`<a href="${esc(d.url)}" target="_blank" rel="noopener">${esc(d.name)}</a>`:esc(d.name)}</div><div class="meta">📅 ${niceDate(d.date)}${d.retailer?` · ${esc(d.retailer)}`:''}${d.sku?` · #${esc(d.sku)}`:''}</div></div></div>`).join('') : '<div class="empty">No confirmed drop dates yet.</div>') +
+      '<p class="tip">Tap a title to open the store page. Stock moves fast — double-check in the store app before you drive.</p>';
+  }
+  renderTabs(); render();
+})();
+</script>
+</body>
+</html>

@@ -143,6 +143,12 @@ GitHub mode reads `config.json` plus these secrets: `POKEMON_WEBHOOK` + `YUGIOH_
 
 ---
 
+## The live stock page (GitHub mode's answer to `/stock`)
+
+GitHub mode has no slash commands (nothing is sitting in Discord listening), so the bot publishes a web page instead: everything in stock right now, with store + distance, what's coming up, and which store checks are working. It updates on every scan.
+
+Turn it on once: repo → **Settings → Pages → Build and deployment → Source: Deploy from a branch → Branch: main, folder: /docs → Save**. GitHub gives you a URL like `https://<you>.github.io/tcg-restock-bot/`. Then **Settings → Secrets and variables → Actions → Variables → New variable** `STATUS_PAGE_URL` = that URL; on the next scan the bot posts the link once in every channel (pin it).
+
 ## Helping the bot with Walmart
 
 Walmart blocks most server IPs (that's why GitHub runs often show Walmart 🔴). A home internet connection gets through far more often, so you can run **just the Walmart check** from your PC while GitHub does everything else:

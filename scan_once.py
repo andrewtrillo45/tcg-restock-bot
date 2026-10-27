@@ -127,6 +127,36 @@ async def build_state(cfg: dict, fetcher) -> State:
     return st
 
 
+def write_status_page_data(state, engine, checkers, misc) -> None:
+    from geo import haversine_mi
+    from render import RETAILER_LABEL, SOURCE_LABELS
+    import filters
+    trackers = list(state.trackers.values())
+    home = trackers[0] if trackers else None
+    items = []
+    for h in engine.last_hits:
+        p = h.product
+        rec = {"game": p.game, "title": p.title, "url": p.url, "price": p.price, "image": p.image,
+               "retailer": RETAILER_LABEL.get(p.retailer, p.retailer), "note": h.note, "qty": h.qty,
+               "tags": filters.funko_tags(p.title) if p.game == "funko" else []}
+        if h.store is not None:
+            rec["store"] = h.store.label
+            if home and h.store.lat is not None and home.get("lat") is not None:
+                rec["miles"] = round(haversine_mi(home["lat"], home["lon"], h.store.lat, h.store.lon), 1)
+        items.append(rec)
+    items.sort(key=lambda r: (r["game"], r.get("miles", 9999), r["title"]))
+    health = []
+    for ch in list(checkers) + ([engine.news] if engine.news else []):
+        st_, detail = engine.health.get(ch.name, ("idle", ""))
+        health.append({"name": SOURCE_LABELS.get(ch.name, ch.label), "ok": st_ == "ok", "detail": detail})
+    data = {"updated_at": time.time(), "home": (f"{home['city']}, {home['state']} {home['zip']} · {home['radius']} mi" if home else ""),
+            "items": items, "drops": state.upcoming_drops(60), "health": health,
+            "games": {g: filters.GAMES[g]["label"] for g in filters.GAMES}}
+    os.makedirs("docs", exist_ok=True)
+    with open(os.path.join("docs", "data.json"), "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+
+
 class Poster:
     def __init__(self, fetcher):
         self.fetcher = fetcher
@@ -234,9 +264,24 @@ async def main() -> int:
             await poster.send(STATUS_WEBHOOK, content, embed)
         misc["health"] = now_health
         misc["searchpages_detail"] = engine.health.get("searchpages", ("", ""))[1]
+        page = os.getenv("STATUS_PAGE_URL", "").strip()
+        if page and misc.get("page_announced") != page:
+            for game in ("pokemon", "yugioh", "funko"):
+                h = GAME_WEBHOOKS.get(game) or ""
+                if h:
+                    await poster.send(h, f"📊 **Live stock page** — everything in stock right now, drops coming up, "
+                                         f"and which stores are working. Bookmark it:\n{page}\n"
+                                         f"(updates every scan · pin this message)")
+            misc["page_announced"] = page
         misc["last_run"] = time.time()
         with open(misc_path, "w", encoding="utf-8") as f:
             json.dump(misc, f)
+
+        # live status page data (served by GitHub Pages from /docs)
+        try:
+            write_status_page_data(state, engine, checkers, misc)
+        except Exception as e:
+            log.warning("status page data failed: %s", e)
 
         # summary for the Actions log
         print("\n=== scan summary ===")
