@@ -20,6 +20,23 @@ BROWSER_HEADERS = {
 }
 
 
+import os
+from urllib.parse import urlsplit
+
+# Optional: route the bot-walled sites (Walmart, GameStop, Hot Topic, FYE) through a residential proxy.
+# PROXY_URL=http://user:pass@host:port   PROXY_SITES=walmart.com,gamestop.com (default: those four)
+PROXY_URL = os.getenv("PROXY_URL", "").strip()
+PROXY_SITES = [x.strip().lower() for x in os.getenv(
+    "PROXY_SITES", "walmart.com,gamestop.com,hottopic.com,fye.com").split(",") if x.strip()]
+
+
+def proxy_for(url: str) -> str | None:
+    if not PROXY_URL:
+        return None
+    host = urlsplit(url).netloc.lower()
+    return PROXY_URL if any(host.endswith(s) for s in PROXY_SITES) else None
+
+
 class AiohttpFetcher:
     def __init__(self, timeout_s: float = 20.0):
         import aiohttp  # imported lazily so tests can run without it
@@ -42,7 +59,7 @@ class AiohttpFetcher:
         await self.start()
         hdrs = {**BROWSER_HEADERS, **(headers or {})}
         try:
-            async with self._session.get(url, params=params, headers=hdrs) as r:
+            async with self._session.get(url, params=params, headers=hdrs, proxy=proxy_for(url)) as r:
                 status = r.status
                 try:
                     data = await r.json(content_type=None)
@@ -77,7 +94,8 @@ class AiohttpFetcher:
         await self.start()
         hdrs = {**BROWSER_HEADERS, "Accept": "text/html,*/*", **(headers or {})}
         try:
-            async with self._session.get(url, params=params, headers=hdrs, allow_redirects=True) as r:
+            async with self._session.get(url, params=params, headers=hdrs, allow_redirects=True,
+                                         proxy=proxy_for(url)) as r:
                 text = await r.text(errors="ignore")
                 return r.status, text, str(r.url)
         except asyncio.TimeoutError:

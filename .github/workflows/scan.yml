@@ -42,6 +42,7 @@ jobs:
           YUGIOH_WEBHOOK: ${{ secrets.YUGIOH_WEBHOOK }}
           FUNKO_WEBHOOK: ${{ secrets.FUNKO_WEBHOOK }}
           STATUS_WEBHOOK: ${{ secrets.STATUS_WEBHOOK }}
+          PROXY_URL: ${{ secrets.PROXY_URL }}          # optional residential proxy for Walmart/GameStop/Hot Topic/FYE
           BESTBUY_API_KEY: ${{ secrets.BESTBUY_API_KEY }}
           TARGET_KEY: ${{ secrets.TARGET_KEY }}
           FORCE_ALERT: ${{ github.event.inputs.post_everything == 'true' && '1' || '' }}

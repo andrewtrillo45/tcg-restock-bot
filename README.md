@@ -151,7 +151,9 @@ Walmart blocks most server IPs (that's why GitHub runs often show Walmart 🔴).
 2. Double-click `install-walmart-helper.bat` — Windows will run the Walmart check every 10 minutes while you're logged in (hidden; log in `state-walmart\walmart-helper.log`).
 3. On GitHub: Settings → Secrets and variables → Actions → **Variables** → New variable `WALMART_ON_PC` = `true`, so the GitHub runs stop hitting Walmart.
 
-Still online stock only. Other options: apply for Walmart's free affiliate API at walmart.io (clean online data, approval takes a while), a residential proxy service (what BrickSeek uses, paid), or Walmart's own "Get in-stock alert" button on an item page.
+Still online stock only. Other options: apply for Walmart's free affiliate API at walmart.io (clean online data, approval takes a while), or Walmart's own "Get in-stock alert" button on an item page.
+
+**Cloud-only alternative — a residential proxy.** Buy a small residential proxy plan (Webshare, IPRoyal, Smartproxy and similar sell them for roughly $5–15/mo), then add a repo secret `PROXY_URL` = `http://user:pass@host:port`. The bot sends only the bot-walled sites (Walmart, GameStop, Hot Topic, FYE) through it; Target, Best Buy, shops and news go direct. That's the same trick BrickSeek uses.
 
 ## Troubleshooting
 
