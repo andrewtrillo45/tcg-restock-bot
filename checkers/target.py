@@ -89,7 +89,41 @@ class TargetChecker:
         stores = [s for s in stores if s.lat is not None][: self.max_stores]
         if stores:
             self._store_cache[ck] = (time.time(), stores)
+            self._save_store_file(zip_code, radius, stores)
+        else:
+            stores = self._load_store_file(zip_code, radius)
+            if stores:
+                log.warning("Target store lookup blocked — using the last known %d stores", len(stores))
         return stores
+
+    # ---- stores remembered on disk (so one blocked lookup doesn't kill the scan) ----
+    def _store_path(self):
+        import os
+        return os.path.join(os.getenv("STATE_DIR", "data"), "target_stores.json")
+
+    def _save_store_file(self, zip_code, radius, stores):
+        import json, os
+        try:
+            path = self._store_path()
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            d = {}
+            if os.path.exists(path):
+                with open(path, encoding="utf-8") as f:
+                    d = json.load(f)
+            d[f"{zip_code}:{radius}"] = [s.__dict__ for s in stores]
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(d, f)
+        except Exception as e:
+            log.debug("store cache save failed: %s", e)
+
+    def _load_store_file(self, zip_code, radius):
+        import json, os
+        try:
+            with open(self._store_path(), encoding="utf-8") as f:
+                d = json.load(f)
+            return [Store(**x) for x in d.get(f"{zip_code}:{radius}", [])]
+        except Exception:
+            return []
 
     @staticmethod
     def _parse_store(s: dict) -> Store | None:
