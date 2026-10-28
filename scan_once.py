@@ -156,8 +156,9 @@ def write_status_page_data(state, engine, checkers, misc) -> None:
             "home_lon": home.get("lon") if home else None, "radius": int(home.get("radius") or 50) if home else 50,
             "items": items, "drops": state.upcoming_drops(60), "health": health,
             "games": {g: filters.GAMES[g]["label"] for g in filters.GAMES}}
-    os.makedirs("docs", exist_ok=True)
-    with open(os.path.join("docs", "data.json"), "w", encoding="utf-8") as f:
+    docs = os.getenv("DOCS_DIR", "docs")
+    os.makedirs(docs, exist_ok=True)
+    with open(os.path.join(docs, "data.json"), "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False)
 
 
