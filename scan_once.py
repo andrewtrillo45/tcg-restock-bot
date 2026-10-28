@@ -45,7 +45,7 @@ NEWS_WEBHOOK = os.getenv("NEWS_WEBHOOK", "") or WEBHOOK
 GAME_WEBHOOKS = {"pokemon": os.getenv("POKEMON_WEBHOOK", ""), "yugioh": os.getenv("YUGIOH_WEBHOOK", ""),
                  "funko": os.getenv("FUNKO_WEBHOOK", "")}
 ANY_GAME = GAME_WEBHOOKS["pokemon"] or GAME_WEBHOOKS["yugioh"]
-STATUS_WEBHOOK = os.getenv("STATUS_WEBHOOK", "") or NEWS_WEBHOOK or GAME_WEBHOOKS["pokemon"] or ANY_GAME
+STATUS_WEBHOOK = os.getenv("STATUS_WEBHOOK", "")   # optional #bot-status channel; unset = health notices stay in the log
 
 
 def hook(game: str, kind: str) -> str:
@@ -141,6 +141,8 @@ def write_status_page_data(state, engine, checkers, misc) -> None:
                "tags": filters.funko_tags(p.title) if p.game == "funko" else []}
         if h.store is not None:
             rec["store"] = h.store.label
+            rec["lat"], rec["lon"] = h.store.lat, h.store.lon
+            rec["address"] = ", ".join(x for x in (h.store.address, h.store.city, h.store.state, h.store.zip) if x)
             if home and h.store.lat is not None and home.get("lat") is not None:
                 rec["miles"] = round(haversine_mi(home["lat"], home["lon"], h.store.lat, h.store.lon), 1)
         items.append(rec)
@@ -150,6 +152,8 @@ def write_status_page_data(state, engine, checkers, misc) -> None:
         st_, detail = engine.health.get(ch.name, ("idle", ""))
         health.append({"name": SOURCE_LABELS.get(ch.name, ch.label), "ok": st_ == "ok", "detail": detail})
     data = {"updated_at": time.time(), "home": (f"{home['city']}, {home['state']} {home['zip']} · {home['radius']} mi" if home else ""),
+            "home_zip": home["zip"] if home else "", "home_lat": home.get("lat") if home else None,
+            "home_lon": home.get("lon") if home else None, "radius": int(home.get("radius") or 50) if home else 50,
             "items": items, "drops": state.upcoming_drops(60), "health": health,
             "games": {g: filters.GAMES[g]["label"] for g in filters.GAMES}}
     os.makedirs("docs", exist_ok=True)
@@ -261,7 +265,10 @@ async def main() -> int:
         prev_health["searchpages_detail"] = misc.get("searchpages_detail", "")
         now_health = {k: v[0] for k, v in engine.health.items()}
         for content, embed in health_changes(prev_health, engine.health):
-            await poster.send(STATUS_WEBHOOK, content, embed)
+            if STATUS_WEBHOOK:
+                await poster.send(STATUS_WEBHOOK, content, embed)
+            else:
+                log.info("health change: %s", content)
         misc["health"] = now_health
         misc["searchpages_detail"] = engine.health.get("searchpages", ("", ""))[1]
         page = os.getenv("STATUS_PAGE_URL", "").strip()
@@ -269,9 +276,9 @@ async def main() -> int:
             for game in ("pokemon", "yugioh", "funko"):
                 h = GAME_WEBHOOKS.get(game) or ""
                 if h:
-                    await poster.send(h, f"📊 **Live stock page** — everything in stock right now, drops coming up, "
-                                         f"and which stores are working. Bookmark it:\n{page}\n"
-                                         f"(updates every scan · pin this message)")
+                    label = {"pokemon": "Pokémon", "yugioh": "Yu-Gi-Oh!", "funko": "Funko Pop"}[game]
+                    await poster.send(h, f"📍 **What's in stock near YOU** — type your zip, get every {label} item on shelves "
+                                         f"around you right now (updates every 10 min):\n{page}?game={game}")
             misc["page_announced"] = page
         misc["last_run"] = time.time()
         with open(misc_path, "w", encoding="utf-8") as f:

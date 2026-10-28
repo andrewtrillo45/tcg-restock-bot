@@ -3,87 +3,151 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>TCG Stock Now</title>
-<meta name="description" content="What's in stock right now near you — Pokémon, Yu-Gi-Oh!, Funko Pops — updated every scan by the TCG Restock Bot.">
+<title>Stock Near You</title>
+<meta name="description" content="Type your zip and see every Pokémon, Yu-Gi-Oh! or Funko Pop item on shelves near you right now — updated every scan by the TCG Restock Bot.">
 <style>
   :root { --bg:#0f1115; --card:#181b22; --line:#2a2f3a; --text:#e8eaf0; --muted:#9aa3b2; --ok:#2ecc71; --bad:#e74c3c;
-          --poke:#f1c40f; --ygo:#9b59b6; --funko:#e4002b; --link:#8ab4f8; }
+          --poke:#f1c40f; --ygo:#9b59b6; --funko:#e4002b; --link:#8ab4f8; --accent:#f1c40f; }
   * { box-sizing:border-box }
   body { margin:0; background:var(--bg); color:var(--text); font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
-  header { padding:16px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--bg); z-index:2 }
-  h1 { margin:0 0 4px; font-size:20px } .sub { color:var(--muted); font-size:13px }
-  .tabs { display:flex; gap:8px; padding:12px 16px 0; overflow-x:auto }
-  .tab { border:1px solid var(--line); background:var(--card); color:var(--text); padding:8px 14px; border-radius:999px; cursor:pointer; white-space:nowrap; font-weight:600 }
+  header { padding:14px 16px; border-bottom:1px solid var(--line); background:var(--bg); }
+  h1 { margin:0; font-size:20px } .sub { color:var(--muted); font-size:13px; margin-top:2px }
+  .zipbar { display:flex; gap:8px; padding:12px 16px; background:var(--card); border-bottom:1px solid var(--line); position:sticky; top:0; z-index:2; align-items:center; flex-wrap:wrap }
+  .zipbar input { font-size:18px; padding:10px 12px; width:120px; border-radius:10px; border:1px solid var(--line); background:var(--bg); color:var(--text); letter-spacing:.1em }
+  .zipbar select { font-size:15px; padding:10px; border-radius:10px; border:1px solid var(--line); background:var(--bg); color:var(--text) }
+  .zipbar button { font-size:15px; font-weight:700; padding:10px 16px; border-radius:10px; border:0; background:var(--accent); color:#000; cursor:pointer }
+  .zipbar .where { color:var(--muted); font-size:13px; width:100% }
+  .tabs { display:flex; gap:8px; padding:10px 16px 0; overflow-x:auto }
+  .tab { border:1px solid var(--line); background:var(--card); color:var(--text); padding:7px 13px; border-radius:999px; cursor:pointer; white-space:nowrap; font-weight:600; font-size:14px }
   .tab.active { border-color:var(--text) }
   main { padding:12px 16px 40px; max-width:900px; margin:0 auto }
-  h2 { font-size:15px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin:20px 0 8px }
+  h2 { font-size:14px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin:18px 0 8px }
   .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px 14px; margin-bottom:10px; display:flex; gap:12px; align-items:flex-start }
   .card img { width:56px; height:56px; object-fit:contain; border-radius:8px; background:#fff; flex:none }
   .card .t { font-weight:600 } .card a { color:var(--link); text-decoration:none } .card a:hover { text-decoration:underline }
   .meta { color:var(--muted); font-size:13px; margin-top:3px }
   .badge { display:inline-block; font-size:11px; font-weight:700; padding:2px 7px; border-radius:6px; margin-right:6px; vertical-align:middle }
-  .b-poke{background:var(--poke);color:#000} .b-ygo{background:var(--ygo);color:#fff} .b-funko{background:var(--funko);color:#fff}
   .b-chase{background:#ff6b00;color:#fff} .b-tag{background:#2a2f3a;color:var(--text)}
   .near { color:var(--ok); font-weight:700 } .online { color:var(--link) }
   .health { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:8px }
   .health .card { display:block; padding:10px 12px } .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:8px }
   .ok{background:var(--ok)} .bad{background:var(--bad)}
-  .empty { color:var(--muted); padding:24px; text-align:center; border:1px dashed var(--line); border-radius:12px }
-  .tip { color:var(--muted); font-size:13px; margin-top:16px }
+  .empty { color:var(--muted); padding:22px; text-align:center; border:1px dashed var(--line); border-radius:12px }
+  .tip { color:var(--muted); font-size:13px; margin-top:14px }
+  .maplink { font-size:13px }
 </style>
 </head>
 <body>
 <header>
-  <h1>🃏 TCG Stock Now</h1>
+  <h1 id="title">📍 Stock near you</h1>
   <div class="sub" id="sub">Loading…</div>
 </header>
+<div class="zipbar">
+  <input id="zip" inputmode="numeric" pattern="[0-9]*" maxlength="5" placeholder="ZIP code" aria-label="ZIP code">
+  <select id="radius" aria-label="Radius">
+    <option value="10">10 mi</option><option value="25">25 mi</option><option value="50" selected>50 mi</option><option value="100">100 mi</option>
+  </select>
+  <button id="go">Show me</button>
+  <div class="where" id="where">Enter your zip to see what's on shelves around you.</div>
+</div>
 <div class="tabs" id="tabs"></div>
 <main id="main"></main>
 <script>
 (async () => {
   const $ = (s) => document.querySelector(s);
+  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const GAME_META = { pokemon: ['🟡', 'Pokémon', '--poke'], yugioh: ['🟣', 'Yu-Gi-Oh!', '--ygo'], funko: ['📦', 'Funko Pop', '--funko'] };
   let data;
   try { data = await (await fetch('data.json?t=' + Date.now())).json(); }
   catch (e) { $('#main').innerHTML = '<div class="empty">No data yet — the first scan hasn\'t run.</div>'; return; }
   const games = Object.keys(data.games || {});
-  const badge = { pokemon: 'b-poke', yugioh: 'b-ygo', funko: 'b-funko' };
+  const params = new URLSearchParams(location.search);
+  let active = params.get('game');
+  if (!games.includes(active)) { try { active = localStorage.getItem('tcg-tab'); } catch (e) {} }
+  if (!games.includes(active)) active = games[0];
+  const lockedToChannel = games.includes(params.get('game'));   // opened from a channel link → that game only
   const ago = (ts) => { const m = Math.round((Date.now()/1000 - ts)/60); return m < 2 ? 'just now' : m < 90 ? m + ' min ago' : Math.round(m/60) + ' h ago'; };
-  $('#sub').textContent = `Within ${data.home || '—'} · updated ${ago(data.updated_at)} · scans every 10 min`;
-  const esc = (s) => String(s || '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const hav = (a, b, c, d) => { const R = 3958.8, t = Math.PI/180, dp = (c-a)*t, dl = (d-b)*t;
+    const x = Math.sin(dp/2)**2 + Math.cos(a*t)*Math.cos(c*t)*Math.sin(dl/2)**2; return 2*R*Math.asin(Math.sqrt(x)); };
   const niceDate = (iso) => { const d = new Date(iso + 'T12:00:00'); const days = Math.round((d - new Date().setHours(12,0,0,0))/86400000);
     return d.toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'}) + (days===0?' (today!)':days===1?' (tomorrow)':days>1?` (in ${days} days)`:''); };
-  let active = games[0];
-  try { active = localStorage.getItem('tcg-tab') || active; } catch (e) {}
-  const tabs = $('#tabs');
-  const allTabs = [...games, 'health'];
-  function renderTabs() {
-    tabs.innerHTML = allTabs.map(g => `<button class="tab ${g===active?'active':''}" data-g="${g}">${g==='health'?'⚙️ Sources':(g==='pokemon'?'🟡 ':g==='yugioh'?'🟣 ':'📦 ') + esc(data.games[g])}</button>`).join('');
-    tabs.querySelectorAll('.tab').forEach(b => b.onclick = () => { active = b.dataset.g; try { localStorage.setItem('tcg-tab', active); } catch (e) {} renderTabs(); render(); });
+
+  // ---- viewer location (zip → lat/lon via zippopotam, cached) ----
+  let me = null;   // {zip, lat, lon, city, state}
+  async function lookup(zip) {
+    try { const r = await fetch('https://api.zippopotam.us/us/' + zip); if (!r.ok) return null; const j = await r.json(); const p = j.places[0];
+      return { zip, lat: +p.latitude, lon: +p.longitude, city: p['place name'], state: p['state abbreviation'] }; } catch (e) { return null; }
   }
-  function item(r) {
-    const where = r.store ? `<span class="near">🏬 ${esc(r.store)}${r.miles!=null?` · ${r.miles} mi`:''}</span>${r.qty!=null?` · ${r.qty} left`:''} · ${esc(r.note)}`
+  async function setZip(zip, save = true) {
+    zip = String(zip || '').replace(/\D/g, '').slice(0, 5);
+    if (zip.length !== 5) { $('#where').textContent = 'Enter a 5-digit zip.'; return; }
+    $('#where').textContent = 'Looking up ' + zip + '…';
+    me = await lookup(zip);
+    if (!me) { $('#where').textContent = 'Couldn\'t find that zip — try a nearby one.'; return; }
+    if (save) { try { localStorage.setItem('tcg-zip', zip); } catch (e) {} }
+    $('#zip').value = zip;
+    render();
+  }
+  const radius = () => +$('#radius').value;
+  $('#go').onclick = () => setZip($('#zip').value);
+  $('#zip').addEventListener('keydown', e => { if (e.key === 'Enter') setZip($('#zip').value); });
+  $('#radius').onchange = () => { try { localStorage.setItem('tcg-radius', radius()); } catch (e) {} render(); };
+  try { const r = localStorage.getItem('tcg-radius'); if (r) $('#radius').value = r; } catch (e) {}
+
+  // ---- tabs ----
+  const tabs = $('#tabs');
+  const allTabs = (lockedToChannel ? [active] : games).concat(['health']);
+  function renderTabs() {
+    tabs.innerHTML = allTabs.map(g => `<button class="tab ${g===active?'active':''}" data-g="${g}">${g==='health'?'⚙️ Store checks':GAME_META[g][0] + ' ' + esc(data.games[g])}</button>`).join('');
+    tabs.querySelectorAll('.tab').forEach(b => b.onclick = () => { active = b.dataset.g; if (games.includes(active)) { try { localStorage.setItem('tcg-tab', active); } catch (e) {} } renderTabs(); render(); });
+  }
+
+  function item(r, miles) {
+    const maps = r.address ? ` · <a class="maplink" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(r.store + ' ' + r.address)}">directions</a>` : '';
+    const where = r.store ? `<span class="near">🏬 ${esc(r.store)}${miles!=null?` · ${miles.toFixed(1)} mi`:''}</span>${r.qty!=null?` · ${r.qty} left`:''} · ${esc(r.note)}${maps}`
                           : `<span class="online">🌐 ${esc(r.note)}</span>`;
     const tags = (r.tags||[]).map(t => `<span class="badge ${t==='CHASE'?'b-chase':'b-tag'}">${esc(t)}</span>`).join('');
-    return `<div class="card">${r.image?`<img src="${esc(r.image)}" alt="">`:''}<div><div class="t">${tags}<a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title)}</a></div>
+    return `<div class="card">${r.image?`<img src="${esc(r.image)}" alt="" loading="lazy">`:''}<div><div class="t">${tags}<a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title)}</a></div>
       <div class="meta">${esc(r.retailer)}${r.price?` · ${esc(r.price)}`:''}</div><div class="meta">${where}</div></div></div>`;
   }
+
   function render() {
     const m = $('#main');
+    const g = GAME_META[active];
+    if (g) { $('#title').textContent = `${g[0]} ${data.games[active]} near you`; document.documentElement.style.setProperty('--accent', `var(${g[2]})`); }
+    $('#sub').textContent = `Updated ${ago(data.updated_at)} · scans every 10 min · bot watches ${data.home || '—'}`;
     if (active === 'health') {
-      m.innerHTML = '<h2>Store checks</h2><div class="health">' + data.health.map(h => `<div class="card"><span class="dot ${h.ok?'ok':'bad'}"></span><b>${esc(h.name)}</b><div class="meta">${esc(h.detail)}</div></div>`).join('') +
-        '</div><p class="tip">🔴 usually means that store\'s website is blocking the bot right now — normal for Walmart/GameStop. It retries every scan.</p>';
+      $('#title').textContent = '⚙️ Store checks';
+      m.innerHTML = '<div class="health">' + data.health.map(h => `<div class="card"><span class="dot ${h.ok?'ok':'bad'}"></span><b>${esc(h.name)}</b><div class="meta">${esc(h.detail)}</div></div>`).join('') +
+        '</div><p class="tip">🔴 usually means that store\'s website is blocking the bot right now — normal for Walmart/GameStop/Hot Topic/FYE. It retries every scan.</p>';
       return;
     }
     const items = data.items.filter(i => i.game === active);
-    const local = items.filter(i => i.store), online = items.filter(i => !i.store);
+    const online = items.filter(i => !i.store);
     const drops = (data.drops||[]).filter(d => d.game === active);
+    let localHtml;
+    if (!me) {
+      localHtml = `<div class="empty">👆 Type your zip above to see ${esc(data.games[active])} stock on shelves near you.</div>`;
+    } else {
+      const local = items.filter(i => i.store && i.lat != null).map(i => ({ r: i, miles: hav(me.lat, me.lon, i.lat, i.lon) }))
+                         .filter(x => x.miles <= radius()).sort((a, b) => a.miles - b.miles);
+      $('#where').textContent = `${me.city}, ${me.state} ${me.zip} · within ${radius()} mi · ${local.length} on shelves`;
+      localHtml = local.length ? local.map(x => item(x.r, x.miles)).join('')
+                : `<div class="empty">Nothing on shelves within ${radius()} mi of ${esc(me.city)} right now. Try a bigger radius, or wait for a Discord ping.</div>`;
+      if (data.home_lat != null && hav(me.lat, me.lon, data.home_lat, data.home_lon) > (data.radius || 50)) {
+        localHtml += `<p class="tip">⚠️ The bot currently only checks stores within ${data.radius || 50} mi of ${esc(data.home || 'its home zip')}. Your zip is outside that — ask EPBoB to add your area.</p>`;
+      }
+    }
     m.innerHTML =
-      `<h2>In stock near you (${local.length})</h2>` + (local.length ? local.map(item).join('') : '<div class="empty">Nothing on local shelves right now. You\'ll get a Discord ping the moment that changes.</div>') +
-      `<h2>In stock online (${online.length})</h2>` + (online.length ? online.map(item).join('') : '<div class="empty">Nothing online right now.</div>') +
-      `<h2>Coming up (${drops.length})</h2>` + (drops.length ? drops.map(d => `<div class="card"><div><div class="t">${d.url?`<a href="${esc(d.url)}" target="_blank" rel="noopener">${esc(d.name)}</a>`:esc(d.name)}</div><div class="meta">📅 ${niceDate(d.date)}${d.retailer?` · ${esc(d.retailer)}`:''}${d.sku?` · #${esc(d.sku)}`:''}</div></div></div>`).join('') : '<div class="empty">No confirmed drop dates yet.</div>') +
-      '<p class="tip">Tap a title to open the store page. Stock moves fast — double-check in the store app before you drive.</p>';
+      `<h2>On shelves near you</h2>${localHtml}` +
+      `<h2>In stock online (${online.length})</h2>` + (online.length ? online.map(r => item(r)).join('') : '<div class="empty">Nothing online right now.</div>') +
+      `<h2>Drops coming up (${drops.length})</h2>` + (drops.length ? drops.map(d => `<div class="card"><div><div class="t">${d.url?`<a href="${esc(d.url)}" target="_blank" rel="noopener">${esc(d.name)}</a>`:esc(d.name)}</div><div class="meta">📅 ${niceDate(d.date)}${d.retailer?` · ${esc(d.retailer)}`:''}${d.sku?` · #${esc(d.sku)}`:''}</div></div></div>`).join('') : '<div class="empty">No confirmed drop dates yet.</div>') +
+      '<p class="tip">Tap a title to open the store page · "directions" opens Google Maps. Stock moves fast — double-check in the store app before you drive.</p>';
   }
+
   renderTabs(); render();
+  const saved = params.get('zip') || (() => { try { return localStorage.getItem('tcg-zip'); } catch (e) { return null; } })();
+  if (saved) setZip(saved, false); else $('#zip').focus();
 })();
 </script>
 </body>
