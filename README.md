@@ -159,7 +159,7 @@ Walmart blocks most server IPs (that's why GitHub runs often show Walmart 🔴).
 
 Still online stock only. Other options: apply for Walmart's free affiliate API at walmart.io (clean online data, approval takes a while), or Walmart's own "Get in-stock alert" button on an item page.
 
-**Cloud-only alternative — a residential proxy.** Buy a small residential proxy plan (Webshare, IPRoyal, Smartproxy and similar sell them for roughly $5–15/mo), then add a repo secret `PROXY_URL` = `http://user:pass@host:port`. The bot sends only the bot-walled sites (Walmart, GameStop, Hot Topic, FYE) through it; Target, Best Buy, shops and news go direct. That's the same trick BrickSeek uses.
+**Cloud-only alternative — a residential proxy.** Buy a small residential proxy plan (Webshare, IPRoyal, Smartproxy and similar sell them for roughly $5–15/mo), then add a repo secret `PROXY_URL` = `http://user:pass@host:port`. The bot sends only the bot-walled sites (Target, Walmart, GameStop, Hot Topic, FYE) through it; Best Buy, shops and news go direct. **As of Oct 27 2026 Target also blocks GitHub's server IPs (HTTP 435), so on GitHub mode Target needs this too.** That's the same trick BrickSeek uses.
 
 ## Troubleshooting
 

@@ -29,7 +29,7 @@ from urllib.parse import urlsplit
 # PROXY_URL=http://user:pass@host:port   PROXY_SITES=walmart.com,gamestop.com (default: those four)
 PROXY_URL = os.getenv("PROXY_URL", "").strip()
 PROXY_SITES = [x.strip().lower() for x in os.getenv(
-    "PROXY_SITES", "walmart.com,gamestop.com,hottopic.com,fye.com").split(",") if x.strip()]
+    "PROXY_SITES", "target.com,walmart.com,gamestop.com,hottopic.com,fye.com").split(",") if x.strip()]
 
 
 # Sites with bot walls (Akamai / PerimeterX) fingerprint the TLS handshake. curl_cffi can impersonate
