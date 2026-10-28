@@ -100,8 +100,9 @@ def which_game(title: str) -> str | None:
 def is_tcg_product(title: str, require_strong: bool = False) -> bool:
     """True if the title looks like sealed card product (not plush / binders / etc.)."""
     t = norm(title)
-    if any(_has_word(t, w) for w in ("protector", "protectors", "display shelf", "pop stack", "wall mount")):
-        return False   # accessories for Funkos / cards, not the thing itself
+    if any(_has_word(t, w) for w in ("protector", "protectors", "display shelf", "pop stack", "wall mount",
+                                     "t-shirt", "tee", "hoodie", "sweatshirt", "enamel pin", "lanyard", "pin set")):
+        return False   # accessories / apparel for Funkos & cards, not the thing itself
     strong = any(_has_word(t, w) for w in STRONG_WORDS) or "trading card" in t or _has_word(t, "tcg")
     if require_strong:
         return strong

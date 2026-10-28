@@ -28,9 +28,14 @@ QUERIES = {
 SEARCH_URLS = {
     "walmart": "https://www.walmart.com/search?q={q}",
     "gamestop": "https://www.gamestop.com/search/?q={q}",
-    "hottopic": "https://www.hottopic.com/search?q={q}",      # Funko only
-    "fye": "https://www.fye.com/search?q={q}",                # Funko only
+    "hottopic": "https://www.hottopic.com/search?q={q}&sz=120",   # Funko only
+    # FYE runs on Shopify: its search endpoint returns JSON with real availability
+    "fye": "https://www.fye.com/search/suggest.json?q={q}&resources[type]=product&resources[limit]=10"
+           "&resources[options][fields]=title,product_type,vendor",
 }
+HT_TILE_RX = re.compile(r'<div class="product"\s+data-pid="(\d+)"(.*?)(?=<div class="product"\s+data-pid=|$)', re.S)
+HT_NAME_RX = re.compile(r'<a class="pdpLink"\s+href="([^"]+)"\s+aria-label="([^"]+)"', re.S)
+HT_PRICE_RX = re.compile(r'\$\s?(\d+\.\d{2})')
 FUNKO_ONLY_SITES = {"hottopic", "fye"}
 TILE_RX = re.compile(r'<(?:div|li)[^>]+class="[^"]*product(?:-tile|-grid-item|Tile)[^"]*"[^>]*>(.*?)(?=<(?:div|li)[^>]+class="[^"]*product(?:-tile|-grid-item|Tile)|$)', re.S | re.I)
 TILE_NAME_RX = re.compile(r'(?:class="[^"]*(?:pdp-link|product-name|link|name)[^"]*"[^>]*>\s*<a[^>]*>|<a[^>]+class="[^"]*(?:link|name)[^"]*"[^>]*>|title="|aria-label=")([^"<]{6,160})', re.I)
@@ -123,6 +128,53 @@ def parse_gamestop(html: str, game: str) -> tuple[str, list[Product], set[str]]:
     return "ok", list(products.values()), in_stock
 
 
+def parse_hottopic(html: str, game: str) -> tuple[str, list[Product], set[str]]:
+    """Hot Topic search: <div class="product" data-pid=…><a class="pdpLink" href aria-label=NAME>.
+    Tiles carry no stock flag — sold-out items drop out of search — so listed means purchasable."""
+    if 'class="product"' not in html and 'data-pid=' not in html:
+        return ("blocked" if BLOCK_RX.search(html[:5000]) else "unknown"), [], set()
+    products: dict[str, Product] = {}
+    in_stock: set[str] = set()
+    for m in HT_TILE_RX.finditer(html):
+        pid, tile = m.group(1), m.group(2)
+        nm = HT_NAME_RX.search(tile)
+        if not nm:
+            continue
+        name = unescape(nm.group(2)).strip()
+        if filters.match(name, {game}) is None:
+            continue
+        pm = HT_PRICE_RX.search(tile)
+        img = re.search(r'(https://cdn\.media\.amplience\.net/s/hottopic/\d+_hi)', tile)
+        products[pid] = Product(retailer="hottopic", id=pid, title=name, game=game,
+                                url="https://www.hottopic.com" + nm.group(1).split("?")[0],
+                                price=f"${pm.group(1)}" if pm else "", image=(img.group(1) + "?$pdpMainImage$") if img else "")
+        if not re.search(r"sold out|out of stock|coming soon", tile, re.I):
+            in_stock.add(pid)
+    return "ok", list(products.values()), in_stock
+
+
+def parse_fye(data, game: str) -> tuple[str, list[Product], set[str]]:
+    """FYE (Shopify) search/suggest.json → products[] with available, price, image, url."""
+    if not isinstance(data, dict):
+        return "blocked", [], set()
+    items = ((data.get("resources") or {}).get("results") or {}).get("products")
+    if items is None:
+        return "unknown", [], set()
+    products: dict[str, Product] = {}
+    in_stock: set[str] = set()
+    for it in items:
+        pid = str(it.get("id") or "")
+        name = it.get("title") or ""
+        if not pid or filters.match(name, {game}) is None:
+            continue
+        products[pid] = Product(retailer="fye", id=pid, title=name, game=game,
+                                url="https://www.fye.com" + (it.get("url") or "").split("?")[0],
+                                price=f"${it.get('price')}" if it.get("price") else "", image=it.get("image") or "")
+        if it.get("available"):
+            in_stock.add(pid)
+    return "ok", list(products.values()), in_stock
+
+
 def parse_tiles(html: str, game: str, site: str) -> tuple[str, list[Product], set[str]]:
     """Generic parser for Salesforce-Commerce-style shops (Hot Topic, FYE): product tiles with a name,
     a link, and 'Add to Cart' vs 'Sold Out' text. Best-effort."""
@@ -180,13 +232,21 @@ class SearchPageChecker:
             for game in site_games:
                 for q in QUERIES[game]:
                     url = SEARCH_URLS[site].format(q=q.replace(" ", "+" if site == "walmart" else "%20"))
-                    code, html, final = await self.fetcher.get_text(url)
-                    if code in (0, 403, 429):
+                    if site == "fye":
+                        code, data = await self.fetcher.get_json(url)
+                        html = ""
+                    else:
+                        code, html, final = await self.fetcher.get_text(url)
+                    if code in (0, 403, 429, 435):
                         state, prods, ok_ids = "blocked", [], set()
                     elif site == "walmart":
                         state, prods, ok_ids = parse_walmart(html, game)
                     elif site == "gamestop":
                         state, prods, ok_ids = parse_gamestop(html, game)
+                    elif site == "hottopic":
+                        state, prods, ok_ids = parse_hottopic(html, game)
+                    elif site == "fye":
+                        state, prods, ok_ids = parse_fye(data, game)
                     else:
                         state, prods, ok_ids = parse_tiles(html, game, site)
                     states.append(state)

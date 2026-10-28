@@ -38,7 +38,7 @@ def classify(status: int, html: str, final_url: str) -> tuple[str, str]:
     m = TITLE_RE.search(html or "")
     if m:
         title = re.sub(r"\s+", " ", m.group(1)).strip()[:200]
-    if status in (403, 429, 503) or (status == 0):
+    if status in (403, 429, 435, 503) or (status == 0):
         return "blocked", title
     if "queue-it" in (final_url or "") or any(re.search(p, html[:200000], re.I) for p in BLOCK_SIGNALS[-2:]):
         return "blocked", title
