@@ -212,7 +212,17 @@ async def main() -> int:
             checkers.append(ShopifyChecker(fetcher))
         if want("urls"):
             checkers.append(PageWatchChecker(fetcher))
-        if not SOURCES or SOURCES & sp_sites:
+        # heavy HTML search pages run every N minutes (default 30) — kinder to a proxy's bandwidth and reputation
+        misc_path0 = os.path.join(STATE_DIR, "misc.json")
+        last_sp = 0.0
+        try:
+            with open(misc_path0, encoding="utf-8") as f:
+                last_sp = float((json.load(f) or {}).get("last_searchpages", 0))
+        except Exception:
+            pass
+        sp_every = float(settings.get("searchpages_every_min") or 30)
+        sp_due = FORCE_ALERT or bool(SOURCES & sp_sites) or (time.time() - last_sp) >= sp_every * 60 - 30
+        if (not SOURCES or SOURCES & sp_sites) and sp_due:
             checkers.append(SearchPageChecker(
                 fetcher,
                 walmart=bool(settings.get("walmart", True)) and want("walmart"),
@@ -270,7 +280,9 @@ async def main() -> int:
             else:
                 log.info("health change: %s", content)
         misc["health"] = now_health
-        misc["searchpages_detail"] = engine.health.get("searchpages", ("", ""))[1]
+        if "searchpages" in engine.health:
+            misc["searchpages_detail"] = engine.health["searchpages"][1]
+            misc["last_searchpages"] = time.time()
         page = os.getenv("STATUS_PAGE_URL", "").strip()
         if page and misc.get("page_announced") != page:
             for game in ("pokemon", "yugioh", "funko"):
